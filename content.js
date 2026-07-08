@@ -136,14 +136,31 @@ async function initialize() {
 // חשיפת האתחול (נקרא מ־quick-chat.js בסיום הטעינה)
 window.initialize = initialize;
 
-// תרגום טקסט של הודעה נכנסת לפי השירות המוגדר
-async function translateText(text) {
+// שליפת שפת היעד היוצאת ששמורה לאיש הקשר הנוכחי
+// (אותו מנגנון זיכרון של תרגום תיבת ההקלדה — מפתח chatLanguagePreferences)
+function getOutgoingLanguage() {
+  try {
+    const nameElement = document.querySelector('#main header span[class*="_ao3e"]');
+    const chatName = nameElement?.textContent?.trim() || 'default';
+    const prefs = JSON.parse(localStorage.getItem('chatLanguagePreferences') || '{}');
+    const lang = prefs[chatName] || 'en';
+    console.log('שפת יעד להודעה יוצאת:', { chatName, lang });
+    return lang;
+  } catch (error) {
+    console.error('שליפת שפת היעד היוצאת נכשלה:', error);
+    return 'en';
+  }
+}
+
+// תרגום טקסט של הודעה לפי השירות המוגדר
+// targetLangOverride — דריסת שפת היעד (משמש לתרגום הודעות יוצאות לשפת הנמען)
+async function translateText(text, targetLangOverride = null) {
   try {
     const translationSettings = await window.getTranslationSettings();
     console.log('הגדרות תרגום:', translationSettings);
 
     const service = translationSettings.service;
-    const targetLang = translationSettings.targetLang;
+    const targetLang = targetLangOverride || translationSettings.targetLang;
 
     console.log('משתמש בשירות תרגום:', service);
 
@@ -220,14 +237,19 @@ function addTranslateButton(textElement) {
     return;
   }
 
+  // זיהוי כיוון ההודעה — יוצאת (שלי) או נכנסת
+  const isOutgoing = !!textElement.closest('.message-out');
+
   const translateBtn = document.createElement('button');
   translateBtn.className = 'translate-btn';
   translateBtn.innerHTML = 'תרגם';
-  translateBtn.setAttribute('title', 'תרגם הודעה זו');
+  translateBtn.setAttribute('title', isOutgoing
+    ? 'תרגם את ההודעה שלי לשפת הנמען'
+    : 'תרגם הודעה זו לשפת היעד שבהגדרות');
   translateBtn.onclick = async (e) => {
     e.stopPropagation();
     e.preventDefault();
-    console.log('כפתור תרגום ההודעה נלחץ');
+    console.log('כפתור תרגום ההודעה נלחץ', { isOutgoing });
 
     // איתור מיכל ההודעה
     const messageWrapper = textElement.closest('div[data-pre-plain-text]');
@@ -314,7 +336,9 @@ async function translateMessage(messageElement) {
 
       console.log('טקסט ההודעה המקורי:', text);
 
-      const translation = await translateText(text);
+      // הודעה יוצאת (שלי) מתורגמת לשפת הנמען; נכנסת — לשפת היעד שבהגדרות
+      const isOutgoing = !!messageElement.closest('.message-out');
+      const translation = await translateText(text, isOutgoing ? getOutgoingLanguage() : null);
       console.log('התקבלה תוצאת תרגום:', translation);
 
       messageContainer.removeChild(loadingElement);
