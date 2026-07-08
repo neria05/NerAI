@@ -1,179 +1,148 @@
-// 检查插件状态的函数
+// NerAI - עוזר AI לוואטסאפ | לוגיקת חלון ההגדרות
+// by Ner Online - neronline.co.il
+
+// בדיקת סטטוס התוסף מול טאב הוואטסאפ הפתוח
 async function checkPluginStatus(retryCount = 0, maxRetries = 3) {
   const statusArea = document.getElementById('statusArea');
   const reloadBtn = document.getElementById('reloadBtn');
-  
+
   if (!statusArea || !reloadBtn) return;
 
   try {
-    // 检查 WhatsApp 标签页
-    const tabs = await chrome.tabs.query({url: "*://web.whatsapp.com/*"});
-    
+    // חיפוש טאב פתוח של WhatsApp Web
+    const tabs = await chrome.tabs.query({ url: "*://web.whatsapp.com/*" });
+
     if (tabs.length === 0) {
-      throw new Error('请先打开 WhatsApp Web 页面');
+      throw new Error('פתח קודם את WhatsApp Web');
     }
 
     try {
-      // 检查是否已进入聊天窗口
+      // בדיקה אם המשתמש נמצא בתוך חלון שיחה
       const chatWindowExists = await chrome.tabs.sendMessage(tabs[0].id, {
         type: 'CHECK_CHAT_WINDOW'
       });
 
       if (!chatWindowExists || !chatWindowExists.exists) {
-        // 如果未进入聊天窗口，显示等待提示
+        // עדיין לא נכנס לשיחה — מציגים הודעת המתנה
         statusArea.className = 'status-area status-waiting';
         statusArea.innerHTML = `
           <div class="status-icon">💬</div>
           <div class="status-text">
-            <div>请先进入任意聊天窗口</div>
-            <div class="status-detail">插件将在聊天窗口中启用</div>
+            <div>היכנס לחלון שיחה כלשהו</div>
+            <div class="status-detail">התוסף יופעל בתוך חלון השיחה</div>
           </div>
         `;
-        reloadBtn.classList.add('hidden');
+        reloadBtn.classList.remove('visible');
         return;
       }
 
-      // 检查按钮是否已加载
+      // בדיקה שכפתורי התוסף נטענו בעמוד
       const buttonsLoaded = await chrome.tabs.sendMessage(tabs[0].id, {
         type: 'CHECK_BUTTONS'
       });
 
       if (buttonsLoaded && buttonsLoaded.success) {
-        // 按钮加载成功，显示成功状态
         statusArea.className = 'status-area status-success';
         statusArea.innerHTML = `
           <div class="status-icon">✓</div>
           <div class="status-text">
-            <div>插件已成功加载</div>
-            <div class="status-detail">功能已就绪</div>
+            <div>התוסף נטען בהצלחה</div>
+            <div class="status-detail">הכל מוכן לשימוש</div>
           </div>
         `;
-        reloadBtn.classList.add('hidden');
+        reloadBtn.classList.remove('visible');
       } else {
-        throw new Error('功能按钮未完全加载');
+        throw new Error('כפתורי התוסף לא נטענו במלואם');
       }
 
     } catch (error) {
-      // 如果还有重试次数，则等待后重试
+      // ניסיון חוזר אם נותרו ניסיונות
       if (retryCount < maxRetries) {
-        console.debug(`Retrying... (${retryCount + 1}/${maxRetries})`);
+        console.debug(`מנסה שוב... (${retryCount + 1}/${maxRetries})`);
         statusArea.innerHTML = `
           <div class="status-icon">⟳</div>
           <div class="status-text">
-            <div>正在重试连接...</div>
-            <div class="status-detail">第 ${retryCount + 1} 次尝试</div>
+            <div>מנסה להתחבר שוב...</div>
+            <div class="status-detail">ניסיון ${retryCount + 1}</div>
           </div>
         `;
-        
-        // 等待 1 秒后重试
+
         await new Promise(resolve => setTimeout(resolve, 1000));
         return checkPluginStatus(retryCount + 1, maxRetries);
       }
-      
+
       throw error;
     }
 
   } catch (error) {
-    console.error('Plugin status check failed:', error);
-    
+    console.error('בדיקת סטטוס התוסף נכשלה:', error);
+
     if (statusArea) {
       statusArea.className = 'status-area status-error';
       statusArea.innerHTML = `
         <div class="status-icon">!</div>
         <div class="status-text">
           <div>${error.message}</div>
-          <div class="status-detail">请尝试重新加载插件</div>
+          <div class="status-detail">נסה לטעון מחדש את התוסף</div>
         </div>
       `;
     }
-    
+
     if (reloadBtn) {
-      reloadBtn.classList.remove('hidden');
+      reloadBtn.classList.add('visible');
     }
   }
 }
 
-// 初始化事件监听器
+// אתחול מאזיני אירועים
 document.addEventListener('DOMContentLoaded', async () => {
-  // 首先检查插件状态
+  // בדיקת סטטוס ראשונית
   await checkPluginStatus();
 
-  // 加载保存的 API Key
-  chrome.storage.sync.get(['apiKey'], (data) => {
-    const apiKeyInput = document.getElementById('apiKey');
-    if(apiKeyInput) {
-      apiKeyInput.value = data.apiKey || '';
-    }
-  });
-
-  // 保存 API Key 设置
-  const apiKeyInput = document.getElementById('apiKey');
-  if(apiKeyInput) {
-    apiKeyInput.addEventListener('change', (e) => {
-      chrome.storage.sync.set({ apiKey: e.target.value });
-    });
-  }
-
-  // 重新加载按钮点击事件
+  // כפתור טעינה מחדש
   const reloadBtn = document.getElementById('reloadBtn');
-  if(reloadBtn) {
+  if (reloadBtn) {
     reloadBtn.addEventListener('click', async () => {
       await reloadPlugin();
     });
   }
-
-  // 添加更新日志按钮点击事件
-  document.getElementById('viewUpdateLog')?.addEventListener('click', async () => {
-    // 获取当前标签页
-    const tabs = await chrome.tabs.query({url: "*://web.whatsapp.com/*"});
-    if (tabs.length > 0) {
-      // 在 WhatsApp 页面中显示更新日志
-      chrome.tabs.sendMessage(tabs[0].id, {
-        type: 'SHOW_UPDATE_LOG'
-      });
-    } else {
-      alert('请先打开 WhatsApp Web 页面');
-    }
-  });
 });
 
-// 重新加载插件
+// טעינה מחדש של התוסף (רענון טאב הוואטסאפ)
 async function reloadPlugin() {
   const reloadBtn = document.getElementById('reloadBtn');
   if (!reloadBtn) return;
 
   try {
-    // 禁用按钮,显示加载状态
     reloadBtn.disabled = true;
-    reloadBtn.textContent = '正在重新加载...';
-    
-    // 重新加载当前 WhatsApp 标签页
-    const tabs = await chrome.tabs.query({url: "*://web.whatsapp.com/*"});
+    reloadBtn.textContent = 'טוען מחדש...';
+
+    const tabs = await chrome.tabs.query({ url: "*://web.whatsapp.com/*" });
     if (tabs.length > 0) {
       await chrome.tabs.reload(tabs[0].id);
-      // 等待页面加载完成
+      // המתנה לסיום טעינת העמוד ואז בדיקת סטטוס
       setTimeout(async () => {
         await checkPluginStatus();
         reloadBtn.disabled = false;
-        reloadBtn.textContent = '重新加载插件';
+        reloadBtn.textContent = 'טען מחדש את התוסף';
       }, 2000);
     } else {
-      throw new Error('未找到 WhatsApp 页面');
+      throw new Error('לא נמצא טאב של WhatsApp Web');
     }
   } catch (error) {
-    console.error('重新加载失败:', error);
+    console.error('הטעינה מחדש נכשלה:', error);
     const statusArea = document.getElementById('statusArea');
     if (statusArea) {
       statusArea.className = 'status-area status-error';
       statusArea.innerHTML = `
         <div class="status-icon">!</div>
         <div class="status-text">
-          <div>重新加载失败: ${error.message}</div>
-          <div class="status-detail">请刷新 WhatsApp 页面后重试</div>
+          <div>הטעינה מחדש נכשלה: ${error.message}</div>
+          <div class="status-detail">רענן את עמוד הוואטסאפ ונסה שוב</div>
         </div>
       `;
     }
     reloadBtn.disabled = false;
-    reloadBtn.textContent = '重新加载插件';
+    reloadBtn.textContent = 'טען מחדש את התוסף';
   }
 }
