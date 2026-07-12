@@ -137,8 +137,9 @@ async function initialize() {
 window.initialize = initialize;
 
 // זיהוי כיוון הודעה — האם זו הודעה שאני שלחתי?
-// שכבה 1 (אמינה): data-id של וואטסאפ מתחיל ב-"true_" בהודעות שלי וב-"false_" בנכנסות
-// שכבה 2 (גיבוי): מחלקות message-out / message-in הישנות
+// שכבה 1: data-id של וואטסאפ מתחיל ב-"true_" בהודעות שלי וב-"false_" בנכנסות
+// שכבה 2: סימני הסטטוס (✓ / ✓✓ / שעון) מרונדרים רק על הודעות שאני שלחתי
+// שכבה 3 (גיבוי): מחלקות message-out / message-in הישנות
 function isOutgoingMessage(element) {
   if (!element) return false;
 
@@ -147,6 +148,16 @@ function isOutgoingMessage(element) {
     const dataId = idHolder.getAttribute('data-id') || '';
     if (dataId.startsWith('true_')) return true;
     if (dataId.startsWith('false_')) return false;
+  }
+
+  // סימני וי — מחפשים בהיקף הבועה כולה (כמה רמות מעל אלמנט הטקסט)
+  const scope = idHolder ||
+                element.parentElement?.parentElement?.parentElement ||
+                element;
+  if (scope.querySelector && scope.querySelector(
+    'span[data-icon="msg-check"], span[data-icon="msg-dblcheck"], span[data-icon="msg-dblcheck-ack"], span[data-icon="msg-time"]'
+  )) {
+    return true;
   }
 
   if (element.closest('.message-out')) return true;
@@ -672,15 +683,28 @@ window.NerAI_debug = function() {
     'סה"כ הודעות עם טקסט': rows.length,
     'הודעות יוצאות (שלי)': 0,
     'הודעות נכנסות': 0,
-    'עם data-id': 0,
+    'זוהו לפי data-id': 0,
+    'זוהו לפי סימני וי (✓)': 0,
     'עם כפתור תרגום': 0,
     'יוצאות עם כפתור': 0
   };
 
+  const checkSelector = 'span[data-icon="msg-check"], span[data-icon="msg-dblcheck"], span[data-icon="msg-dblcheck-ack"], span[data-icon="msg-time"]';
+
   rows.forEach(row => {
     const out = isOutgoingMessage(row);
     if (out) stats['הודעות יוצאות (שלי)']++; else stats['הודעות נכנסות']++;
-    if (row.closest('[data-id]')) stats['עם data-id']++;
+
+    const idHolder = row.closest('[data-id]');
+    if (idHolder && /^(true|false)_/.test(idHolder.getAttribute('data-id') || '')) {
+      stats['זוהו לפי data-id']++;
+    }
+
+    const scope = idHolder || row.parentElement?.parentElement?.parentElement || row;
+    if (scope.querySelector && scope.querySelector(checkSelector)) {
+      stats['זוהו לפי סימני וי (✓)']++;
+    }
+
     if (row.querySelector('.translate-btn')) {
       stats['עם כפתור תרגום']++;
       if (out) stats['יוצאות עם כפתור']++;
@@ -690,6 +714,10 @@ window.NerAI_debug = function() {
   // דוגמת data-id ראשונה לבדיקת הפורמט
   const firstId = document.querySelector('#main [data-id]');
   stats['דוגמת data-id'] = firstId ? firstId.getAttribute('data-id').substring(0, 30) + '...' : 'לא נמצא!';
+
+  // דוגמת סימן וי ראשון
+  const firstCheck = document.querySelector('#main ' + checkSelector.split(', ').join(', #main '));
+  stats['נמצא סימן וי בעמוד'] = firstCheck ? 'כן (' + firstCheck.getAttribute('data-icon') + ')' : 'לא!';
 
   console.table(stats);
   return stats;
