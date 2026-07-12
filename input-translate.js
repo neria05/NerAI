@@ -3,6 +3,21 @@
 
 window.initializeInputTranslate = initializeInputTranslate;
 
+// איתור אזור תיבת ההקלדה — סלקטורים מהעמיד לפחות עמיד
+// (וואטסאפ מחליפים מחלקות CSS תדיר; תג footer עצמו יציב)
+function findComposerFooter() {
+  return document.querySelector('#main footer') ||
+         document.querySelector('footer._ak1i') ||
+         document.querySelector('footer');
+}
+
+// איתור תיבת ההקלדה בתוך ה־footer
+function findComposerInput(footer) {
+  if (!footer) return null;
+  return footer.querySelector('.lexical-rich-text-input div[contenteditable="true"]') ||
+         footer.querySelector('div[contenteditable="true"]');
+}
+
 // תרגום טקסט לפי שירות התרגום המוגדר
 async function translateText(text, targetLang = 'he') {
   console.log('מכין תרגום טקסט:', { text, targetLang });
@@ -76,14 +91,14 @@ function createTranslateButton() {
     e.stopPropagation();
 
     // איתור תיבת ההקלדה דרך ה־footer
-    const footer = document.querySelector('footer._ak1i');
+    const footer = findComposerFooter();
 
     if (!footer) {
       console.warn('לא נמצא footer');
       return;
     }
 
-    const inputBox = footer.querySelector('.lexical-rich-text-input div[contenteditable="true"]');
+    const inputBox = findComposerInput(footer);
 
     if (!inputBox) {
       console.warn('לא נמצאה תיבת הקלדה');
@@ -106,79 +121,58 @@ function createTranslateButton() {
   return button;
 }
 
-// הוספת כפתור התרגום לתיבת ההקלדה
-function addInputTranslateButton(retryCount = 0, maxRetries = 5) {
-  console.log('מנסה להוסיף כפתור תרגום לתיבת ההקלדה...');
-
+// הוספת כפתור התרגום לתיבת ההקלדה — ניסיון יחיד ושקט.
+// הניסיונות החוזרים מגיעים מה־observer (עם קירור), לא משרשרת setTimeout —
+// אחרת הקונסול מוצף כשה־footer לא נמצא
+function addInputTranslateButton() {
   // מניעת הוספה כפולה
   if (document.querySelector('.input-translate-btn')) {
-    console.log('כפתור התרגום כבר קיים, מדלג');
     return true;
   }
 
-  const footer = document.querySelector('footer._ak1i');
+  const footer = findComposerFooter();
   if (!footer) {
-    console.log('לא נמצא אלמנט footer');
-    return handleRetry('footer', retryCount, maxRetries);
+    return false;
   }
 
-  const inputBox = footer.querySelector('.lexical-rich-text-input div[contenteditable="true"]');
+  const inputBox = findComposerInput(footer);
   if (!inputBox) {
-    console.log('לא נמצאה תיבת הקלדה');
-    return handleRetry('תיבת הקלדה', retryCount, maxRetries);
+    return false;
   }
 
   try {
     const translateBtn = createTranslateButton();
     translateBtn.classList.add('input-translate-btn');
 
-    // מוודאים שקיים מיכל אב יציב
-    const container = inputBox.closest('.lexical-rich-text-input');
-    if (!container) {
-      console.log('לא נמצא מיכל אב יציב');
-      return handleRetry('מיכל', retryCount, maxRetries);
+    // מיקום: אחרי מיכל תיבת ההקלדה, עם נפילה חזרה לאב הישיר
+    const container = inputBox.closest('.lexical-rich-text-input') || inputBox.parentElement;
+    if (!container || !container.parentNode) {
+      return false;
     }
 
-    // הוספת הכפתור אחרי מיכל תיבת ההקלדה
     container.parentNode.insertBefore(translateBtn, container.nextSibling);
-    console.log('כפתור התרגום נוסף בהצלחה לתיבת ההקלדה');
+    console.log('NerAI: כפתור התרגום נוסף לתיבת ההקלדה');
     return true;
   } catch (error) {
     console.error('שגיאה בהוספת כפתור התרגום:', error);
-    return handleRetry('שגיאה', retryCount, maxRetries);
-  }
-}
-
-// מנגנון ניסיונות חוזרים עם השהיה גדלה
-function handleRetry(reason, retryCount, maxRetries) {
-  if (retryCount < maxRetries) {
-    console.log(`${reason} לא מוכן, ניסיון ${retryCount + 1}/${maxRetries}...`);
-    setTimeout(() => {
-      addInputTranslateButton(retryCount + 1, maxRetries);
-    }, 1000 * (retryCount + 1));
     return false;
   }
-  console.warn(`חריגה ממספר הניסיונות המרבי (${maxRetries}), מוותר על הוספת כפתור התרגום`);
-  return false;
 }
 
 // אתחול תכונת תרגום תיבת ההקלדה
 function initializeInputTranslate() {
   console.log('מאתחל את תרגום תיבת ההקלדה...');
 
-  // מעקב אחרי שינויים ב־DOM — חלון שיחה חדש נטען
-  const observer = new MutationObserver((mutations) => {
-    for (const mutation of mutations) {
-      if (mutation.type === 'childList' &&
-          mutation.addedNodes.length > 0 &&
-          !document.querySelector('.input-translate-btn')) {
-        console.log('זוהה שינוי ב־DOM, מנסה להוסיף כפתור תרגום...');
-        if (addInputTranslateButton()) {
-          console.log('כפתור התרגום נוסף בהצלחה');
-          break;
-        }
-      }
-    }
+  // מעקב אחרי שינויים ב־DOM עם קירור של 2 שניות בין ניסיונות
+  let lastAttempt = 0;
+  const observer = new MutationObserver(() => {
+    if (document.querySelector('.input-translate-btn')) return;
+
+    const now = Date.now();
+    if (now - lastAttempt < 2000) return;
+    lastAttempt = now;
+
+    addInputTranslateButton();
   });
 
   observer.observe(document.body, {
@@ -750,13 +744,13 @@ function createTranslateModal(text, inputBox) {
     console.log('מחיל את תוצאת התרגום:', { translationText: translation });
 
     try {
-      const footer = document.querySelector('footer._ak1i');
+      const footer = findComposerFooter();
 
       if (!footer) {
         throw new Error('לא נמצא מיכל תיבת ההקלדה');
       }
 
-      const richTextInput = footer.querySelector('.lexical-rich-text-input div[contenteditable="true"]');
+      const richTextInput = findComposerInput(footer);
 
       if (!richTextInput) {
         throw new Error('לא נמצאה תיבת הקלדה');
