@@ -270,8 +270,9 @@ function addTranslateButton(textElement) {
     e.preventDefault();
     console.log('כפתור תרגום ההודעה נלחץ', { isOutgoing });
 
-    // איתור מיכל ההודעה
-    const messageWrapper = textElement.closest('div[data-pre-plain-text]');
+    // איתור מיכל ההודעה — עם נפילה חזרה לשורת ההודעה (data-id)
+    const messageWrapper = textElement.closest('div[data-pre-plain-text]') ||
+                           textElement.closest('[data-id]');
     if (messageWrapper) {
       await translateMessage(messageWrapper);
     } else {
@@ -286,18 +287,23 @@ function addTranslateButton(textElement) {
   textElement.appendChild(buttonContainer);
 }
 
-// עיבוד הודעה חדשה — הוספת כפתור תרגום
+// עיבוד הודעה — הוספת כפתור תרגום. מחזירה true אם נוסף כפתור
 function processMessage(message) {
-  if (!message.dataset.processed) {
-    // איתור אלמנט הטקסט בהודעה
-    const textContainer = message.querySelector('span.selectable-text');
-    if (textContainer) {
-      message.classList.add('message-wrapper');
-      message.style.position = 'relative';
-      addTranslateButton(textContainer);
-      message.dataset.processed = 'true';
-    }
+  if (message.dataset.neraiProcessed) return false;
+
+  // איתור אלמנט הטקסט — עם סלקטור גיבוי
+  const textContainer = message.querySelector('span.selectable-text') ||
+                        message.querySelector('.selectable-text');
+  if (!textContainer) {
+    // הודעה בלי טקסט (תמונה/קול) או שעדיין בטעינה — ננסה שוב בסריקה הבאה
+    return false;
   }
+
+  message.classList.add('message-wrapper');
+  message.style.position = 'relative';
+  addTranslateButton(textContainer);
+  message.dataset.neraiProcessed = 'true';
+  return true;
 }
 
 // תרגום הודעה והצגת התוצאה מתחתיה
@@ -312,8 +318,14 @@ async function translateMessage(messageElement) {
     let messageContainer = messageElement.closest('.message-container');
 
     if (!messageContainer) {
-      // שיטת גיבוי: שימוש באלמנט האב או בהודעה עצמה
-      messageContainer = messageElement.parentElement || messageElement;
+      if (messageElement.hasAttribute('data-id')) {
+        // כשהגענו משורת הודעה (data-id) — התרגום נכנס לתוך השורה עצמה,
+        // לא לאב שלה (האב הוא רשימת ההודעות כולה)
+        messageContainer = messageElement;
+      } else {
+        // שיטת גיבוי: שימוש באלמנט האב או בהודעה עצמה
+        messageContainer = messageElement.parentElement || messageElement;
+      }
       messageContainer.classList.add('message-container');
     }
 
@@ -578,6 +590,40 @@ function collectTextContent(element) {
     .replace(/\s+$/gm, '');
 }
 
+// סריקה מלאה של כל ההודעות בעמוד — תופסת גם הודעות שנטענו בשלבים
+// (הודעות יוצאות נבנות ב־DOM בהדרגה: קודם המעטפת ורק אחר כך הטקסט,
+// ולכן בדיקת addedNodes בלבד מפספסת אותן)
+function scanForMessages() {
+  const messages = document.querySelectorAll('div[data-pre-plain-text]');
+  let newIncoming = 0;
+  let newOutgoing = 0;
+
+  messages.forEach(message => {
+    if (processMessage(message)) {
+      if (isOutgoingMessage(message)) {
+        newOutgoing++;
+      } else {
+        newIncoming++;
+      }
+    }
+  });
+
+  if (newIncoming || newOutgoing) {
+    console.log(`NerAI: נוספו כפתורי תרגום — ${newIncoming} להודעות נכנסות, ${newOutgoing} להודעות יוצאות`);
+  }
+}
+
+// תזמון סריקה עם השהיה — מונע סריקות מיותרות בזמן שינויי DOM רצופים
+let messageScanScheduled = false;
+function scheduleMessageScan() {
+  if (messageScanScheduled) return;
+  messageScanScheduled = true;
+  setTimeout(() => {
+    messageScanScheduled = false;
+    scanForMessages();
+  }, 600);
+}
+
 // מעקב אחרי הודעות חדשות ב־DOM
 function observeMessages() {
   console.log('מאתחל את מעקב ההודעות...');
@@ -592,17 +638,9 @@ function observeMessages() {
           addAnalysisButton(main);
         }
 
-        // עיבוד הודעות חדשות
-        mutation.addedNodes.forEach(node => {
-          if (node.nodeType === 1) {
-            const messages = node.querySelectorAll('div[data-pre-plain-text]');
-            messages.forEach(message => {
-              if (!message.dataset.processed) {
-                processMessage(message);
-              }
-            });
-          }
-        });
+        // סריקת הודעות — מתוזמנת, על כל העמוד
+        scheduleMessageScan();
+        break;
       }
     }
   });
@@ -612,13 +650,8 @@ function observeMessages() {
     subtree: true
   });
 
-  // עיבוד הודעות שכבר קיימות בעמוד
-  const messages = document.querySelectorAll('div[data-pre-plain-text]');
-  messages.forEach(message => {
-    if (!message.dataset.processed) {
-      processMessage(message);
-    }
-  });
+  // סריקה ראשונית של ההודעות הקיימות
+  scanForMessages();
 
   // ניסיון ראשוני להוספת הכפתורים
   const main = document.querySelector('#main');
@@ -631,6 +664,36 @@ function observeMessages() {
     observer.disconnect();
   };
 }
+
+// כלי אבחון — הרץ window.NerAI_debug() בקונסול לקבלת תמונת מצב
+window.NerAI_debug = function() {
+  const rows = document.querySelectorAll('div[data-pre-plain-text]');
+  const stats = {
+    'סה"כ הודעות עם טקסט': rows.length,
+    'הודעות יוצאות (שלי)': 0,
+    'הודעות נכנסות': 0,
+    'עם data-id': 0,
+    'עם כפתור תרגום': 0,
+    'יוצאות עם כפתור': 0
+  };
+
+  rows.forEach(row => {
+    const out = isOutgoingMessage(row);
+    if (out) stats['הודעות יוצאות (שלי)']++; else stats['הודעות נכנסות']++;
+    if (row.closest('[data-id]')) stats['עם data-id']++;
+    if (row.querySelector('.translate-btn')) {
+      stats['עם כפתור תרגום']++;
+      if (out) stats['יוצאות עם כפתור']++;
+    }
+  });
+
+  // דוגמת data-id ראשונה לבדיקת הפורמט
+  const firstId = document.querySelector('#main [data-id]');
+  stats['דוגמת data-id'] = firstId ? firstId.getAttribute('data-id').substring(0, 30) + '...' : 'לא נמצא!';
+
+  console.table(stats);
+  return stats;
+};
 
 // הזרקת סגנונות כלליים של התוסף
 function injectStyles() {
