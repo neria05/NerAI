@@ -136,6 +136,25 @@ async function initialize() {
 // חשיפת האתחול (נקרא מ־quick-chat.js בסיום הטעינה)
 window.initialize = initialize;
 
+// זיהוי כיוון הודעה — האם זו הודעה שאני שלחתי?
+// שכבה 1 (אמינה): data-id של וואטסאפ מתחיל ב-"true_" בהודעות שלי וב-"false_" בנכנסות
+// שכבה 2 (גיבוי): מחלקות message-out / message-in הישנות
+function isOutgoingMessage(element) {
+  if (!element) return false;
+
+  const idHolder = element.closest('[data-id]');
+  if (idHolder) {
+    const dataId = idHolder.getAttribute('data-id') || '';
+    if (dataId.startsWith('true_')) return true;
+    if (dataId.startsWith('false_')) return false;
+  }
+
+  if (element.closest('.message-out')) return true;
+  if (element.closest('.message-in')) return false;
+
+  return false;
+}
+
 // שליפת שפת היעד היוצאת ששמורה לאיש הקשר הנוכחי
 // (אותו מנגנון זיכרון של תרגום תיבת ההקלדה — מפתח chatLanguagePreferences)
 function getOutgoingLanguage() {
@@ -238,7 +257,7 @@ function addTranslateButton(textElement) {
   }
 
   // זיהוי כיוון ההודעה — יוצאת (שלי) או נכנסת
-  const isOutgoing = !!textElement.closest('.message-out');
+  const isOutgoing = isOutgoingMessage(textElement);
 
   const translateBtn = document.createElement('button');
   translateBtn.className = 'translate-btn';
@@ -337,7 +356,7 @@ async function translateMessage(messageElement) {
       console.log('טקסט ההודעה המקורי:', text);
 
       // הודעה יוצאת (שלי) מתורגמת לשפת הנמען; נכנסת — לשפת היעד שבהגדרות
-      const isOutgoing = !!messageElement.closest('.message-out');
+      const isOutgoing = isOutgoingMessage(messageElement);
       const translation = await translateText(text, isOutgoing ? getOutgoingLanguage() : null);
       console.log('התקבלה תוצאת תרגום:', translation);
 
@@ -1652,12 +1671,11 @@ async function analyzeConversation(messageContainer) {
     const chatList = panel.querySelector('.chat-messages');
 
     messageElements.forEach(element => {
-      const msgContainer = element.closest('.message-in, .message-out');
       const preText = element.getAttribute('data-pre-plain-text');
       let time = '';
       let text = '';
-      // הודעות יוצאות מזוהות לפי class בשם message-out
-      let isMe = msgContainer && msgContainer.classList.contains('message-out');
+      // זיהוי הודעות שלי לפי data-id (עם גיבוי למחלקות הישנות)
+      let isMe = isOutgoingMessage(element);
       let sender = isMe ? 'אני' : 'הצד השני';
 
       // חילוץ השעה מהמאפיין data-pre-plain-text
