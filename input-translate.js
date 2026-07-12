@@ -18,6 +18,45 @@ function findComposerInput(footer) {
          footer.querySelector('div[contenteditable="true"]');
 }
 
+// הכנסת טקסט לתיבת ההקלדה — תיבת Lexical של וואטסאפ לא מקבלת השמה ישירה,
+// לכן מדמים בחירת הכל, מחיקה והדבקה מהלוח
+async function applyTextToComposer(text) {
+  const footer = findComposerFooter();
+  if (!footer) {
+    throw new Error('לא נמצא מיכל תיבת ההקלדה');
+  }
+
+  const richTextInput = findComposerInput(footer);
+  if (!richTextInput) {
+    throw new Error('לא נמצאה תיבת הקלדה');
+  }
+
+  const isMac = /Mac|iPod|iPhone|iPad/.test(navigator.platform);
+
+  richTextInput.focus();
+
+  // בחירת כל הטקסט הקיים (Ctrl+A / Cmd+A)
+  richTextInput.dispatchEvent(new KeyboardEvent('keydown', {
+    key: 'a', code: 'KeyA', ctrlKey: !isMac, metaKey: isMac, bubbles: true
+  }));
+
+  // מחיקה
+  richTextInput.dispatchEvent(new KeyboardEvent('keydown', {
+    key: 'Backspace', code: 'Backspace', bubbles: true
+  }));
+
+  // העתקה ללוח והדבקה (Ctrl+V / Cmd+V)
+  await navigator.clipboard.writeText(text);
+  richTextInput.dispatchEvent(new KeyboardEvent('keydown', {
+    key: 'v', code: 'KeyV', ctrlKey: !isMac, metaKey: isMac, bubbles: true
+  }));
+
+  // אירוע input כדי שוואטסאפ יזהה את השינוי
+  richTextInput.dispatchEvent(new InputEvent('input', {
+    bubbles: true, cancelable: true, inputType: 'insertFromPaste', data: text
+  }));
+}
+
 // תרגום טקסט לפי שירות התרגום המוגדר
 async function translateText(text, targetLang = 'he') {
   console.log('מכין תרגום טקסט:', { text, targetLang });
@@ -160,12 +199,174 @@ function addInputTranslateButton() {
     }
 
     container.parentNode.insertBefore(translateBtn, container.nextSibling);
-    console.log('NerAI: כפתור התרגום נוסף לתיבת ההקלדה');
+
+    // כפתור שיפור ניסוח (✨) — צמוד לכפתור התרגום
+    const rewriteBtn = createRewriteButton();
+    rewriteBtn.classList.add('input-rewrite-btn');
+    container.parentNode.insertBefore(rewriteBtn, translateBtn.nextSibling);
+
+    console.log('NerAI: כפתורי תרגום ושיפור ניסוח נוספו לתיבת ההקלדה');
     return true;
   } catch (error) {
     console.error('שגיאה בהוספת כפתור התרגום:', error);
     return false;
   }
+}
+
+// יצירת כפתור שיפור הניסוח (✨) — בצבעי הלהבה של המותג
+function createRewriteButton() {
+  const button = document.createElement('button');
+  button.setAttribute('title', 'NerAI: שיפור ניסוח עם AI');
+  button.setAttribute('aria-label', 'שיפור ניסוח ההודעה עם AI');
+  button.innerHTML = '<span aria-hidden="true" style="font-size:17px;line-height:1;">✨</span>';
+
+  button.style.cssText = `
+    background: linear-gradient(135deg, #F59E0B 0%, #F43F5E 100%);
+    color: #ffffff;
+    border: none;
+    border-radius: 50%;
+    width: 38px;
+    height: 38px;
+    min-width: 38px;
+    margin: 0 2px;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    align-self: center;
+    flex-shrink: 0;
+    cursor: pointer;
+    box-shadow: 0 2px 8px rgba(244, 63, 94, 0.35);
+    transition: transform 0.15s, box-shadow 0.15s;
+  `;
+
+  button.addEventListener('mouseenter', () => {
+    button.style.transform = 'translateY(-1px) scale(1.06)';
+    button.style.boxShadow = '0 4px 12px rgba(244, 63, 94, 0.5)';
+  });
+
+  button.addEventListener('mouseleave', () => {
+    button.style.transform = 'none';
+    button.style.boxShadow = '0 2px 8px rgba(244, 63, 94, 0.35)';
+  });
+
+  button.onclick = async (e) => {
+    e.stopPropagation();
+
+    const footer = findComposerFooter();
+    const inputBox = findComposerInput(footer);
+
+    if (!inputBox) {
+      console.warn('לא נמצאה תיבת הקלדה');
+      return;
+    }
+
+    const text = inputBox.textContent.trim();
+    if (!text) {
+      alert('כתוב קודם טיוטת הודעה בתיבת ההקלדה, ואז לחץ על ✨ לשיפור הניסוח');
+      return;
+    }
+
+    const modal = createRewriteModal(text);
+    button.parentElement.appendChild(modal);
+  };
+
+  return button;
+}
+
+// מודאל שיפור הניסוח — בחירת סגנון, שכתוב והחלה לתיבה
+function createRewriteModal(text) {
+  const TONES = {
+    professional: 'מקצועי',
+    friendly: 'ידידותי',
+    concise: 'קצר ותכליתי',
+    marketing: 'שיווקי'
+  };
+  const savedTone = localStorage.getItem('nerai_rewrite_tone') || 'professional';
+
+  const modal = document.createElement('div');
+  modal.className = 'translate-modal';
+  modal.innerHTML = `
+    <div class="translate-modal-content" dir="rtl">
+      <div class="translate-modal-header" style="background: linear-gradient(135deg, #F59E0B 0%, #F43F5E 100%);">
+        <h3>✨ שיפור ניסוח</h3>
+        <button class="modal-close">×</button>
+      </div>
+      <div class="translate-modal-body">
+        <div class="source-text">
+          <div class="text-label">הטיוטה שלך</div>
+          <div class="text-content rewrite-source"></div>
+        </div>
+        <div class="target-lang">
+          <div class="text-label">סגנון</div>
+          <select class="lang-select tone-select">
+            ${Object.entries(TONES).map(([value, name]) => `
+              <option value="${value}"${value === savedTone ? ' selected' : ''}>${name}</option>
+            `).join('')}
+          </select>
+        </div>
+        <div class="translation-result">
+          <div class="text-label">הגרסה המשופרת</div>
+          <div class="result-content"></div>
+        </div>
+      </div>
+      <div class="translate-modal-footer">
+        <button class="rewrite-go-btn translate-btn" style="background: linear-gradient(135deg, #F59E0B 0%, #F43F5E 100%);">שפר ניסוח</button>
+        <button class="apply-btn" disabled>החל</button>
+      </div>
+    </div>
+  `;
+
+  // הטקסט מוזן כ־textContent כדי למנוע הזרקת HTML
+  modal.querySelector('.rewrite-source').textContent = text;
+
+  const closeBtn = modal.querySelector('.modal-close');
+  const rewriteGoBtn = modal.querySelector('.rewrite-go-btn');
+  const applyBtn = modal.querySelector('.apply-btn');
+  const resultContent = modal.querySelector('.result-content');
+  const toneSelect = modal.querySelector('.tone-select');
+
+  closeBtn.onclick = () => modal.remove();
+
+  // שמירת הסגנון הנבחר לפעם הבאה
+  toneSelect.addEventListener('change', (e) => {
+    localStorage.setItem('nerai_rewrite_tone', e.target.value);
+  });
+
+  rewriteGoBtn.onclick = async () => {
+    try {
+      rewriteGoBtn.classList.add('btn-loading');
+      const tone = toneSelect.value;
+
+      const improved = await window.rewriteText(text, tone);
+      console.log('NerAI: שיפור הניסוח הושלם');
+
+      resultContent.textContent = improved;
+      applyBtn.disabled = false;
+    } catch (error) {
+      console.error('שיפור הניסוח נכשל:', error);
+      resultContent.textContent = 'שיפור הניסוח נכשל: ' + (error.message || 'שגיאה לא ידועה');
+    } finally {
+      rewriteGoBtn.classList.remove('btn-loading');
+    }
+  };
+
+  applyBtn.onclick = async () => {
+    const improved = resultContent.textContent;
+    if (!improved) return;
+
+    try {
+      await applyTextToComposer(improved);
+      modal.remove();
+    } catch (error) {
+      console.error('החלת הניסוח המשופר נכשלה:', error);
+      alert('החלת הניסוח המשופר נכשלה: ' + error.message);
+    }
+  };
+
+  modal.onclick = (e) => e.stopPropagation();
+
+  return modal;
 }
 
 // אתחול תכונת תרגום תיבת ההקלדה

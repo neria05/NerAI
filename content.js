@@ -1,4 +1,4 @@
-// NerAI - עוזר AI לוואטסאפ | סקריפט תוכן ראשי
+﻿// NerAI - עוזר AI לוואטסאפ | סקריפט תוכן ראשי
 // תרגום הודעות, ניתוח שיחות AI, מודאל הגדרות
 // by Ner Online - neronline.co.il
 
@@ -8,6 +8,21 @@ let pluginStatus = {
   observer: false,
   apiService: false
 };
+
+// תרגום אוטומטי להודעות נכנסות — נטען מההגדרות ומתעדכן חי
+let autoTranslateIncoming = false;
+chrome.storage.sync.get(['autoTranslateIncoming'], (data) => {
+  autoTranslateIncoming = data.autoTranslateIncoming === true;
+  if (autoTranslateIncoming) {
+    console.log('NerAI: תרגום אוטומטי להודעות נכנסות פעיל');
+  }
+});
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === 'sync' && changes.autoTranslateIncoming) {
+    autoTranslateIncoming = changes.autoTranslateIncoming.newValue === true;
+    console.log('NerAI: תרגום אוטומטי להודעות נכנסות:', autoTranslateIncoming ? 'הופעל' : 'כובה');
+  }
+});
 
 // בדיקת מצב התוסף
 function checkStatus() {
@@ -604,6 +619,7 @@ function collectTextContent(element) {
 // סריקה מלאה של כל ההודעות בעמוד — תופסת גם הודעות שנטענו בשלבים
 // (הודעות יוצאות נבנות ב־DOM בהדרגה: קודם המעטפת ורק אחר כך הטקסט,
 // ולכן בדיקת addedNodes בלבד מפספסת אותן)
+let initialScanDone = false;
 function scanForMessages() {
   const messages = document.querySelectorAll('div[data-pre-plain-text]');
   let newIncoming = 0;
@@ -611,16 +627,47 @@ function scanForMessages() {
 
   messages.forEach(message => {
     if (processMessage(message)) {
-      if (isOutgoingMessage(message)) {
+      const outgoing = isOutgoingMessage(message);
+      if (outgoing) {
         newOutgoing++;
       } else {
         newIncoming++;
+        // תרגום אוטומטי — רק להודעות חדשות שהגיעו אחרי הטעינה,
+        // לא להיסטוריה שנסרקת בסריקה הראשונה
+        if (initialScanDone && autoTranslateIncoming) {
+          autoTranslateIfNeeded(message);
+        }
       }
     }
   });
 
+  initialScanDone = true;
+
   if (newIncoming || newOutgoing) {
     console.log(`NerAI: נוספו כפתורי תרגום — ${newIncoming} להודעות נכנסות, ${newOutgoing} להודעות יוצאות`);
+  }
+}
+
+// תרגום אוטומטי של הודעה נכנסת — מדלג אם היא כבר בשפת היעד
+async function autoTranslateIfNeeded(message) {
+  try {
+    if (message.querySelector('.translation-content')) return;
+
+    const textElement = message.querySelector('.selectable-text');
+    if (!textElement) return;
+
+    const text = collectTextContent(textElement);
+    if (!text) return;
+
+    const { targetLang } = await window.getTranslationSettings();
+
+    // אם היעד עברית וההודעה כבר מכילה עברית — אין מה לתרגם
+    if (targetLang === 'he' && /[\u0590-\u05FF]/.test(text)) return;
+
+    console.log('NerAI: מתרגם אוטומטית הודעה נכנסת');
+    await translateMessage(message);
+  } catch (error) {
+    console.error('שגיאה בתרגום האוטומטי:', error);
   }
 }
 
@@ -2360,6 +2407,16 @@ function showSettingsModal() {
           </select>
         </div>
 
+        <!-- תרגום אוטומטי להודעות נכנסות -->
+        <div class="toggle-switch-container" style="margin-top: 14px; margin-bottom: 4px;">
+          <label for="autoTranslateIncoming" class="toggle-label">תרגום אוטומטי להודעות נכנסות</label>
+          <label class="toggle-switch">
+            <input type="checkbox" id="autoTranslateIncoming" class="toggle-input">
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+        <p style="font-size: 12px; color: #666; margin: 0;">הודעות חדשות שמגיעות בשפה זרה יתורגמו מיד, בלי ללחוץ על "תרגם"</p>
+
         <!-- הגדרות API לפי השירות הנבחר -->
         <div class="api-settings" id="translation-settings" style="margin-top: 16px;">
           <!-- Google — לא דורש מפתח -->
@@ -2650,6 +2707,7 @@ function showSettingsModal() {
       const formData = {
         translationApi: document.getElementById('translationApi').value,
         targetLanguage: document.getElementById('targetLanguage').value,
+        autoTranslateIncoming: document.getElementById('autoTranslateIncoming').checked,
         aiEnabled: document.getElementById('aiEnabled').checked
       };
 
@@ -2709,6 +2767,7 @@ function showSettingsModal() {
       chrome.storage.sync.get([
         'translationApi',
         'targetLanguage',
+        'autoTranslateIncoming',
         'aiEnabled',
         'aiApi',
         'deepseekApiKey',
@@ -2748,6 +2807,12 @@ function showSettingsModal() {
         // שפת יעד
         if (data.targetLanguage) {
           document.getElementById('targetLanguage').value = data.targetLanguage;
+        }
+
+        // תרגום אוטומטי להודעות נכנסות
+        const autoTranslateCheckbox = document.getElementById('autoTranslateIncoming');
+        if (autoTranslateCheckbox) {
+          autoTranslateCheckbox.checked = data.autoTranslateIncoming === true;
         }
 
         // מצב מתג ה־AI

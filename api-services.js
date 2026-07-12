@@ -501,6 +501,59 @@ window.getTranslationService = () => {
   });
 };
 
+// שיפור ניסוח (AI Rewrite) — משכתב טיוטת הודעה בסגנון נבחר
+// משתמש בשירות ה־AI המוגדר (DeepSeek / OpenAI)
+window.rewriteText = async function(text, tone = 'professional') {
+  const toneInstructions = {
+    professional: 'טון מקצועי, מכובד וברור',
+    friendly: 'טון ידידותי, חם וקליל',
+    concise: 'ניסוח קצר ותכליתי — משפט או שניים לכל היותר',
+    marketing: 'טון שיווקי ומשכנע שמניע לפעולה'
+  };
+
+  const cfg = await window.getAiService();
+  if (!cfg.enabled || !cfg.apiKey) {
+    throw new Error('שיפור ניסוח דורש הפעלת AI והזנת מפתח API בהגדרות');
+  }
+
+  const systemPrompt = `אתה עוזר כתיבה להודעות וואטסאפ. שכתב את ההודעה הבאה ב${toneInstructions[tone] || toneInstructions.professional}, באותה שפה שבה היא כתובה. שמור על הכוונה והמידע המקוריים. פלוט אך ורק את הגרסה המשופרת — ללא הסברים, ללא מרכאות וללא חתימה.`;
+
+  const isOpenAi = cfg.service === 'siliconflow';
+  const url = isOpenAi
+    ? (cfg.apiUrl || 'https://api.openai.com/v1/chat/completions')
+    : 'https://api.deepseek.com/v1/chat/completions';
+  const model = isOpenAi ? (cfg.model || 'gpt-4o-mini') : 'deepseek-chat';
+
+  console.log('NerAI: בקשת שיפור ניסוח', { service: cfg.service, tone, textLength: text.length });
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${cfg.apiKey}`
+    },
+    body: JSON.stringify({
+      model,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: text }
+      ],
+      temperature: 0.7
+    })
+  });
+
+  if (!response.ok) {
+    throw new Error(`שגיאת API: ${response.status} ${response.statusText}`);
+  }
+
+  const data = await response.json();
+  if (!data.choices || !data.choices[0] || !data.choices[0].message) {
+    throw new Error('פורמט תגובת API שגוי: חסרה תוצאה');
+  }
+
+  return data.choices[0].message.content.trim();
+};
+
 // טיפול אחיד בשגיאות תרגום
 window.handleTranslationError = (error) => {
   console.error('שגיאת תרגום:', {
