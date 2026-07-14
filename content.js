@@ -2827,6 +2827,14 @@ function showSettingsModal() {
             <textarea id="systemRole" rows="4" placeholder="הגדר את האופי והתפקיד של סוכן NerAI שלך">אתה NerAI — עוזר אישי חכם לוואטסאפ. אתה עוזר למשתמש לנתח שיחות, לנסח הודעות ולתקשר בצורה יעילה ומקצועית. ענה בעברית אלא אם התבקשת אחרת.</textarea>
           </div>
         </div>
+
+        <!-- כלים לסוכן (webhooks) -->
+        <div class="settings-section" id="ai-tools-section" style="margin-top: 16px; border-bottom: none; padding-bottom: 0; display: none;">
+          <h4 style="margin: 0 0 6px;">🔧 כלים לסוכן (Webhooks)</h4>
+          <p style="margin: 0 0 12px; font-size: 12px; color: #666;">חבר את הסוכן ל-n8n / Make / Zapier. כשתבקש ממנו בצ'אט "הוסף ליומן" או "צור משימה", הוא ישלח את המידע לכתובת ה-webhook שהגדרת.</p>
+          <div id="tools-list"></div>
+          <button type="button" class="add-tool-btn" style="background: #EDE9FE; color: #6D28D9; border: 1px dashed #A78BFA; border-radius: 8px; padding: 8px 14px; font-size: 13px; font-weight: 600; cursor: pointer; width: 100%; margin-top: 8px;">+ הוסף כלי</button>
+        </div>
       </div>
     </div>
 
@@ -2893,11 +2901,13 @@ function showSettingsModal() {
   const aiEnabledToggle = content.querySelector('#aiEnabled');
   const aiServiceOptions = content.querySelector('#ai-service-options');
   const aiSystemRole = content.querySelector('#ai-system-role');
+  const aiToolsSection = content.querySelector('#ai-tools-section');
 
   aiEnabledToggle.addEventListener('change', () => {
     console.log('מתג ה־AI שונה:', aiEnabledToggle.checked);
     aiServiceOptions.style.display = aiEnabledToggle.checked ? 'block' : 'none';
     aiSystemRole.style.display = aiEnabledToggle.checked ? 'block' : 'none';
+    if (aiToolsSection) aiToolsSection.style.display = aiEnabledToggle.checked ? 'block' : 'none';
 
     // הצגת שדות השירות הנבחר
     if (aiEnabledToggle.checked) {
@@ -2929,6 +2939,55 @@ function showSettingsModal() {
       showAgentSetupWizard();
     });
   }
+
+  // === ניהול כלים (webhooks) ===
+  const toolsList = content.querySelector('#tools-list');
+
+  // יצירת כרטיס כלי (ריק או מאותחל מנתונים שמורים)
+  function renderToolCard(tool = {}) {
+    const card = document.createElement('div');
+    card.className = 'tool-card';
+    card.style.cssText = 'background:#F9F8FE;border:1px solid #E9E5F5;border-radius:8px;padding:12px;margin-bottom:10px;';
+    // params מוצגים כשורות "שם: תיאור"
+    const paramsText = (tool.params || []).map(p => `${p.name}: ${p.description || ''}`).join('\n');
+    card.innerHTML = `
+      <div style="display:flex;gap:8px;margin-bottom:8px;">
+        <input type="text" class="tool-name" placeholder="שם הכלי (באנגלית, למשל add_to_calendar)" dir="ltr" style="flex:1;padding:8px;border:1px solid #ccc;border-radius:6px;font-size:13px;" value="${(tool.name || '').replace(/"/g, '&quot;')}">
+        <button type="button" class="tool-remove" title="הסר כלי" style="background:#FEE2E2;color:#B91C1C;border:none;border-radius:6px;width:34px;cursor:pointer;font-size:16px;">×</button>
+      </div>
+      <input type="text" class="tool-desc" placeholder="מתי להשתמש בכלי? (למשל: כשמבקשים להוסיף אירוע ליומן)" style="width:100%;padding:8px;border:1px solid #ccc;border-radius:6px;font-size:13px;margin-bottom:8px;box-sizing:border-box;" value="${(tool.description || '').replace(/"/g, '&quot;')}">
+      <input type="text" class="tool-url" placeholder="כתובת Webhook (n8n/Make)" dir="ltr" style="width:100%;padding:8px;border:1px solid #ccc;border-radius:6px;font-size:13px;margin-bottom:8px;box-sizing:border-box;" value="${(tool.webhookUrl || '').replace(/"/g, '&quot;')}">
+      <textarea class="tool-params" rows="2" placeholder="שדות שהסוכן יחלץ, שורה לכל שדה בפורמט — שם: תיאור&#10;למשל:&#10;title: כותרת האירוע&#10;date: תאריך ושעה" style="width:100%;padding:8px;border:1px solid #ccc;border-radius:6px;font-size:12px;box-sizing:border-box;font-family:inherit;">${paramsText}</textarea>
+    `;
+    card.querySelector('.tool-remove').addEventListener('click', () => card.remove());
+    toolsList.appendChild(card);
+  }
+
+  content.querySelector('.add-tool-btn').addEventListener('click', () => renderToolCard());
+
+  // איסוף הכלים מהטופס — נחשף ל-saveSettings דרך closure
+  content._collectTools = function() {
+    const tools = [];
+    toolsList.querySelectorAll('.tool-card').forEach(card => {
+      const name = card.querySelector('.tool-name').value.trim();
+      const webhookUrl = card.querySelector('.tool-url').value.trim();
+      if (!name || !webhookUrl) return; // כלי לא שלם — מדלגים
+      const params = card.querySelector('.tool-params').value
+        .split('\n')
+        .map(line => line.trim())
+        .filter(Boolean)
+        .map(line => {
+          const i = line.indexOf(':');
+          return i > 0
+            ? { name: line.slice(0, i).trim(), description: line.slice(i + 1).trim() }
+            : { name: line, description: '' };
+        });
+      tools.push({ name, description: card.querySelector('.tool-desc').value.trim(), webhookUrl, params });
+    });
+    return tools;
+  };
+
+  content._renderToolCard = renderToolCard;
 
   // קיפול/פתיחת האפשרויות המתקדמות
   const advancedSettingsToggle = content.querySelector('.advanced-settings-toggle');
@@ -2998,6 +3057,11 @@ function showSettingsModal() {
         }
 
         formData.systemRole = document.getElementById('systemRole').value;
+
+        // כלים (webhooks) — נאספים מהטופס
+        if (typeof content._collectTools === 'function') {
+          formData.agentTools = content._collectTools();
+        }
       }
 
       chrome.storage.sync.set(formData, () => {
@@ -3034,7 +3098,8 @@ function showSettingsModal() {
         'siliconflowApiKey_ai',
         'siliconflowApiUrl_ai',
         'siliconflowModel_ai',
-        'systemRole'
+        'systemRole',
+        'agentTools'
       ], (data) => {
         if (chrome.runtime.lastError) {
           console.error('שגיאה בטעינת ההגדרות:', chrome.runtime.lastError);
@@ -3171,6 +3236,17 @@ function showSettingsModal() {
         // תפקיד המערכת
         if (data.systemRole) {
           document.getElementById('systemRole').value = data.systemRole;
+        }
+
+        // כלים (webhooks) — טעינת הכרטיסים השמורים
+        if (Array.isArray(data.agentTools) && typeof content._renderToolCard === 'function') {
+          data.agentTools.forEach(tool => content._renderToolCard(tool));
+        }
+
+        // הצגת אזור הכלים אם ה-AI מופעל
+        const toolsSection = document.getElementById('ai-tools-section');
+        if (toolsSection && data.aiEnabled === true) {
+          toolsSection.style.display = 'block';
         }
       });
     } catch (error) {
@@ -3877,8 +3953,18 @@ function openNeraiSideChat() {
     thinking.classList.add('nerai-thinking');
     sendBtn.disabled = true;
 
+    // מציג בצ'אט כשהסוכן מפעיל כלי חיצוני (webhook)
+    const onToolCall = ({ name, args }) => {
+      const note = document.createElement('div');
+      note.className = 'nerai-tool-note';
+      const argsStr = Object.entries(args).map(([k, v]) => `${k}: ${v}`).join(', ');
+      note.textContent = `🔧 מפעיל כלי: ${name}${argsStr ? ' (' + argsStr + ')' : ''}`;
+      messagesArea.insertBefore(note, thinking);
+      messagesArea.scrollTop = messagesArea.scrollHeight;
+    };
+
     try {
-      const reply = await window.askAgent(contextText, history);
+      const reply = await window.askAgent(contextText, history, onToolCall);
       thinking.classList.remove('nerai-thinking');
       thinking.textContent = reply;
       history.push({ role: 'assistant', content: reply });
@@ -4073,6 +4159,15 @@ function openNeraiSideChat() {
     }
     .nerai-bubble-error { border-color: #FCA5A5 !important; color: #DC2626 !important; }
     .nerai-thinking { color: #8696a0 !important; letter-spacing: 2px; }
+    .nerai-tool-note {
+      align-self: center;
+      background: #FEF3C7;
+      color: #92400E;
+      font-size: 12px;
+      padding: 6px 12px;
+      border-radius: 12px;
+      border: 1px solid #FDE68A;
+    }
     .nerai-sidechat-input {
       padding: 12px;
       background: #ffffff;

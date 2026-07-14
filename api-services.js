@@ -580,21 +580,67 @@ window.rewriteText = async function(text, tone = 'professional') {
   return data.choices[0].message.content.trim();
 };
 
-// שיחה עם הסוכן על הודעות שנבחרו — רב־תורית (צ'אט צדדי)
-// contextText: ההודעות שנבחרו | history: [{role:'user'|'assistant', content}]
-window.askAgent = async function(contextText, history) {
-  const cfg = await window.getAiService();
-  if (!cfg.enabled || !cfg.apiKey) {
-    throw new Error('הצ\'אט עם הסוכן דורש הפעלת AI והזנת מפתח API בהגדרות');
+// קבלת הכלים שהמשתמש הגדיר (webhooks לסוכן)
+window.getAgentTools = function() {
+  return new Promise((resolve) => {
+    chrome.storage.sync.get(['agentTools'], (data) => {
+      resolve(Array.isArray(data.agentTools) ? data.agentTools : []);
+    });
+  });
+};
+
+// המרת כלי NerAI לפורמט function-calling של OpenAI/DeepSeek
+function neraiToolToApiFormat(tool) {
+  const properties = {};
+  const required = [];
+  (tool.params || []).forEach(p => {
+    if (!p.name) return;
+    properties[p.name] = { type: 'string', description: p.description || '' };
+    required.push(p.name);
+  });
+  return {
+    type: 'function',
+    function: {
+      name: tool.name,
+      description: tool.description || '',
+      parameters: { type: 'object', properties, required }
+    }
+  };
+}
+
+// שליחת קריאת כלי ל-webhook שהוגדר (n8n/make וכו') והחזרת התוצאה
+async function callToolWebhook(tool, args) {
+  try {
+    console.log('NerAI: קורא ל-webhook', { tool: tool.name, url: tool.webhookUrl });
+    const response = await fetch(tool.webhookUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tool: tool.name, arguments: args, source: 'NerAI' })
+    });
+    const text = await response.text();
+    if (!response.ok) {
+      return `שגיאה מה-webhook (${response.status}): ${text.substring(0, 200)}`;
+    }
+    return text ? text.substring(0, 500) : 'בוצע בהצלחה';
+  } catch (error) {
+    console.error('קריאת ה-webhook נכשלה:', error);
+    return `קריאת ה-webhook נכשלה: ${error.message}`;
   }
+}
 
-  const systemPrompt = `${cfg.systemRole}\n\nהמשתמש בחר הודעות מסוימות משיחת וואטסאפ ורוצה לשוחח איתך עליהן. אלה ההודעות שנבחרו:\n\n${contextText}\n\nענה על שאלות המשתמש בהתייחס להודעות האלה. היה תמציתי, מעשי וענה בעברית.`;
-
+// קריאת השלמת צ'אט אחת (עם או בלי כלים)
+async function chatCompletion(cfg, messages, tools) {
   const isOpenAi = cfg.service === 'siliconflow';
   const url = isOpenAi
     ? (cfg.apiUrl || 'https://api.openai.com/v1/chat/completions')
     : 'https://api.deepseek.com/v1/chat/completions';
   const model = isOpenAi ? (cfg.model || 'gpt-4o-mini') : 'deepseek-chat';
+
+  const body = { model, messages, temperature: 0.7 };
+  if (tools && tools.length > 0) {
+    body.tools = tools.map(neraiToolToApiFormat);
+    body.tool_choice = 'auto';
+  }
 
   const response = await fetch(url, {
     method: 'POST',
@@ -602,14 +648,7 @@ window.askAgent = async function(contextText, history) {
       'Content-Type': 'application/json',
       'Authorization': `Bearer ${cfg.apiKey}`
     },
-    body: JSON.stringify({
-      model,
-      messages: [
-        { role: 'system', content: systemPrompt },
-        ...history
-      ],
-      temperature: 0.7
-    })
+    body: JSON.stringify(body)
   });
 
   if (!response.ok) {
@@ -620,8 +659,65 @@ window.askAgent = async function(contextText, history) {
   if (!data.choices || !data.choices[0] || !data.choices[0].message) {
     throw new Error('פורמט תגובת API שגוי: חסרה תשובה');
   }
+  return data.choices[0].message;
+}
 
-  return data.choices[0].message.content.trim();
+// שיחה עם הסוכן על הודעות שנבחרו — רב־תורית, עם תמיכה בכלים (function-calling)
+// contextText: ההודעות שנבחרו | history: [{role, content}]
+// onToolCall: callback אופציונלי שמקבל {name, args} להצגה ב-UI
+window.askAgent = async function(contextText, history, onToolCall) {
+  const cfg = await window.getAiService();
+  if (!cfg.enabled || !cfg.apiKey) {
+    throw new Error('הצ\'אט עם הסוכן דורש הפעלת AI והזנת מפתח API בהגדרות');
+  }
+
+  const tools = await window.getAgentTools();
+  const toolsNote = tools.length > 0
+    ? `\n\nיש לך גישה לכלים חיצוניים. השתמש בהם כשהמשתמש מבקש פעולה שהם מתאימים לה (למשל הוספה ליומן, יצירת משימה).`
+    : '';
+
+  const systemPrompt = `${cfg.systemRole}\n\nהמשתמש בחר הודעות מסוימות משיחת וואטסאפ ורוצה לשוחח איתך עליהן. אלה ההודעות שנבחרו:\n\n${contextText}\n\nענה על שאלות המשתמש בהתייחס להודעות האלה. היה תמציתי, מעשי וענה בעברית.${toolsNote}`;
+
+  const messages = [
+    { role: 'system', content: systemPrompt },
+    ...history
+  ];
+
+  // לולאת function-calling — עד 4 סבבים כדי למנוע לולאה אינסופית
+  for (let round = 0; round < 4; round++) {
+    const message = await chatCompletion(cfg, messages, tools);
+
+    // אין קריאות כלים — זו התשובה הסופית
+    if (!message.tool_calls || message.tool_calls.length === 0) {
+      return message.content ? message.content.trim() : '';
+    }
+
+    // מוסיפים את הודעת הסוכן (עם בקשות הכלים) להיסטוריה
+    messages.push(message);
+
+    // מבצעים כל קריאת כלי ומחזירים את התוצאה למודל
+    for (const call of message.tool_calls) {
+      const tool = tools.find(t => t.name === call.function.name);
+      let args = {};
+      try { args = JSON.parse(call.function.arguments || '{}'); } catch (e) { /* ריק */ }
+
+      if (typeof onToolCall === 'function') {
+        onToolCall({ name: call.function.name, args });
+      }
+
+      const result = tool
+        ? await callToolWebhook(tool, args)
+        : `הכלי "${call.function.name}" לא נמצא`;
+
+      messages.push({
+        role: 'tool',
+        tool_call_id: call.id,
+        content: String(result)
+      });
+    }
+  }
+
+  return 'הסוכן ביצע את הפעולות המבוקשות.';
 };
 
 // טיפול אחיד בשגיאות תרגום
