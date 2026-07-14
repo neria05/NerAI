@@ -140,6 +140,18 @@ async function initialize() {
       console.error('פונקציית אתחול תרגום תיבת ההקלדה לא נמצאה');
       updatePluginStatus('apiService', false);
     }
+
+    // פתיחת אשף הגדרת הסוכן בפעם הראשונה (פעם אחת בלבד)
+    chrome.storage.sync.get(['agentSetupDone'], (data) => {
+      if (!data.agentSetupDone) {
+        // המתנה קצרה כדי שוואטסאפ יסיים להיטען לפני שמציגים את האשף
+        setTimeout(() => {
+          if (typeof window.showAgentSetupWizard === 'function') {
+            window.showAgentSetupWizard();
+          }
+        }, 4000);
+      }
+    });
   } catch (error) {
     console.error('שגיאת אתחול:', error);
     updatePluginStatus('translation', false);
@@ -2400,6 +2412,183 @@ function showAnalysisError(container, message) {
   });
 }
 
+// ========================= אשף הגדרת סוכן NerAI =========================
+
+// הרכבת הנחיית מערכת מותאמת מתשובות המשתמש (ללא צורך ב-AI — מיידי וחינמי)
+function composeSystemPrompt(p) {
+  const toneMap = {
+    professional: 'מקצועי, מכובד וברור',
+    friendly: 'ידידותי, חם ונגיש',
+    direct: 'ישיר, תכליתי וקצר',
+    warm: 'אישי, אמפתי וחם'
+  };
+  const goalMap = {
+    sales: 'לקדם מכירות, לזהות הזדמנויות ולשכנע בעדינות מבלי להיות דוחק',
+    support: 'לתת שירות ותמיכה מעולים, לפתור בעיות ולהרגיע',
+    coordination: 'לתאם פגישות ומשימות, לעקוב אחר סטטוסים ולוודא שדברים לא נופלים',
+    general: 'לתקשר בצורה ברורה, יעילה ואנושית'
+  };
+
+  let prompt = `אתה NerAI — עוזר ה-AI האישי של ${p.business ? p.business : 'המשתמש'}.`;
+  if (p.audience) {
+    prompt += ` אתה מסייע בתקשורת מול ${p.audience}.`;
+  }
+  prompt += ` הטון שלך תמיד ${toneMap[p.tone] || toneMap.professional}.`;
+  prompt += ` המטרה המרכזית שלך היא ${goalMap[p.goal] || goalMap.general}.`;
+  if (p.notes && p.notes.trim()) {
+    prompt += ` הנחיות נוספות חשובות: ${p.notes.trim()}.`;
+  }
+  prompt += ` ענה תמיד בעברית אלא אם התבקשת אחרת, והתאם את סגנונך להקשר של שיחת וואטסאפ — קצר, טבעי ולעניין.`;
+  return prompt;
+}
+
+// אשף ה-setup — שאלות בסיסיות → הנחיית מערכת לסוכן (ניתנת לעריכה)
+async function showAgentSetupWizard() {
+  // מניעת פתיחה כפולה
+  if (document.querySelector('.nerai-wizard-modal')) return;
+
+  const existingProfile = (await window.getAgentProfile()) || {};
+
+  const modal = document.createElement('div');
+  modal.className = 'settings-modal nerai-wizard-modal';
+
+  const content = document.createElement('div');
+  content.className = 'settings-content';
+  content.setAttribute('dir', 'rtl');
+  content.innerHTML = `
+    <div class="settings-header">
+      <h3>✨ הגדרת סוכן NerAI</h3>
+      <button class="close-btn">×</button>
+    </div>
+
+    <!-- שלב 1: שאלות -->
+    <div class="wizard-step wizard-questions">
+      <div class="settings-body">
+        <p style="margin: 0 0 20px; color: #555; font-size: 14px;">כמה שאלות קצרות, וניצור לך סוכן AI מותאם אישית. תוכל לערוך הכל אחר כך.</p>
+
+        <div class="api-key-input">
+          <label>במה אתה עוסק? (שם העסק / התחום)</label>
+          <input type="text" id="wiz-business" placeholder="לדוגמה: ייעוץ פיננסי, חנות בגדים, סוכנות ביטוח" value="${(existingProfile.business || '').replace(/"/g, '&quot;')}">
+        </div>
+
+        <div class="api-key-input">
+          <label>עם מי אתה מתכתב בעיקר?</label>
+          <input type="text" id="wiz-audience" placeholder="לדוגמה: לקוחות פוטנציאליים, לקוחות קיימים, ספקים" value="${(existingProfile.audience || '').replace(/"/g, '&quot;')}">
+        </div>
+
+        <div class="api-key-input">
+          <label>איזה טון מתאים לך?</label>
+          <select id="wiz-tone">
+            <option value="professional">מקצועי ומכובד</option>
+            <option value="friendly">ידידותי וחם</option>
+            <option value="direct">ישיר וקצר</option>
+            <option value="warm">אישי ואמפתי</option>
+          </select>
+        </div>
+
+        <div class="api-key-input">
+          <label>מה המטרה המרכזית שלך בשיחות?</label>
+          <select id="wiz-goal">
+            <option value="sales">מכירות ושכנוע</option>
+            <option value="support">שירות ותמיכה</option>
+            <option value="coordination">תיאום וניהול משימות</option>
+            <option value="general">תקשורת כללית</option>
+          </select>
+        </div>
+
+        <div class="api-key-input">
+          <label>הנחיות נוספות לסוכן (רשות)</label>
+          <textarea id="wiz-notes" rows="2" placeholder="לדוגמה: תמיד להזכיר את שעות הפעילות, לא להבטיח מחירים בלי אישור">${existingProfile.notes || ''}</textarea>
+        </div>
+      </div>
+      <div class="settings-footer">
+        <button class="save-btn wizard-generate-btn">צור הנחיית מערכת ✨</button>
+      </div>
+    </div>
+
+    <!-- שלב 2: תצוגה מקדימה ועריכה -->
+    <div class="wizard-step wizard-preview" style="display: none;">
+      <div class="settings-body">
+        <p style="margin: 0 0 12px; color: #555; font-size: 14px;">זו הנחיית המערכת של הסוכן שלך. אפשר לערוך אותה חופשי לפני שמירה:</p>
+        <div class="api-key-input">
+          <textarea id="wiz-result" rows="8" style="line-height: 1.6;"></textarea>
+        </div>
+      </div>
+      <div class="settings-footer" style="justify-content: space-between;">
+        <button class="wizard-back-btn" style="background: #f0f2f5; color: #667781; border: none; border-radius: 8px; padding: 10px 20px; font-weight: 500; cursor: pointer;">← חזרה לשאלות</button>
+        <button class="save-btn wizard-save-btn">שמור את הסוכן</button>
+      </div>
+    </div>
+  `;
+
+  modal.appendChild(content);
+  document.body.appendChild(modal);
+
+  // טעינת ערכים שמורים לתפריטים
+  if (existingProfile.tone) content.querySelector('#wiz-tone').value = existingProfile.tone;
+  if (existingProfile.goal) content.querySelector('#wiz-goal').value = existingProfile.goal;
+
+  const questionsStep = content.querySelector('.wizard-questions');
+  const previewStep = content.querySelector('.wizard-preview');
+  const resultTextarea = content.querySelector('#wiz-result');
+
+  const readProfile = () => ({
+    business: content.querySelector('#wiz-business').value.trim(),
+    audience: content.querySelector('#wiz-audience').value.trim(),
+    tone: content.querySelector('#wiz-tone').value,
+    goal: content.querySelector('#wiz-goal').value,
+    notes: content.querySelector('#wiz-notes').value.trim()
+  });
+
+  content.querySelector('.close-btn').addEventListener('click', () => modal.remove());
+  modal.addEventListener('click', (e) => {
+    if (e.target === modal) modal.remove();
+  });
+
+  // צור → הרכבת הפרומפט ומעבר לתצוגה מקדימה
+  content.querySelector('.wizard-generate-btn').addEventListener('click', () => {
+    const profile = readProfile();
+    resultTextarea.value = composeSystemPrompt(profile);
+    questionsStep.style.display = 'none';
+    previewStep.style.display = 'block';
+  });
+
+  // חזרה לשאלות
+  content.querySelector('.wizard-back-btn').addEventListener('click', () => {
+    previewStep.style.display = 'none';
+    questionsStep.style.display = 'block';
+  });
+
+  // שמירה → systemRole + agentProfile + סימון שהאשף הושלם
+  content.querySelector('.wizard-save-btn').addEventListener('click', () => {
+    const profile = readProfile();
+    const systemRole = resultTextarea.value.trim();
+
+    chrome.storage.sync.set({
+      systemRole: systemRole,
+      agentProfile: profile,
+      agentSetupDone: true
+    }, () => {
+      if (chrome.runtime.lastError) {
+        console.error('שמירת הסוכן נכשלה:', chrome.runtime.lastError);
+        return;
+      }
+      console.log('NerAI: הסוכן נשמר');
+      modal.remove();
+
+      // הודעת הצלחה
+      const toast = document.createElement('div');
+      toast.className = 'settings-toast success';
+      toast.textContent = '✓ סוכן NerAI שלך מוכן! אפשר לערוך אותו בכל עת בהגדרות';
+      document.body.appendChild(toast);
+      setTimeout(() => toast.remove(), 3500);
+    });
+  });
+}
+
+// חשיפה גלובלית (לשימוש מכפתור בהגדרות)
+window.showAgentSetupWizard = showAgentSetupWizard;
+
 // מודאל ההגדרות של התוסף
 function showSettingsModal() {
   const modal = document.createElement('div');
@@ -2613,9 +2802,13 @@ function showSettingsModal() {
 
         <!-- הגדרת תפקיד המערכת של ה־AI -->
         <div class="settings-section" id="ai-system-role" style="margin-top: 16px; border-bottom: none; padding-bottom: 0; display: none;">
-          <h4>תפקיד ה־AI (System Prompt)</h4>
+          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
+            <h4 style="margin: 0;">אופי הסוכן (System Prompt)</h4>
+            <button type="button" class="open-wizard-btn" style="background: linear-gradient(135deg, #F59E0B 0%, #F43F5E 100%); color: white; border: none; border-radius: 8px; padding: 6px 14px; font-size: 12px; font-weight: 600; cursor: pointer;">✨ אשף הגדרה</button>
+          </div>
+          <p style="margin: 0 0 10px; font-size: 12px; color: #666;">הנחיה זו משפיעה על כל פונקציות ה-AI: ניתוח שיחה, שיפור ניסוח ועוד. השתמש באשף ליצירה מהירה, או כתוב ידנית.</p>
           <div class="prompt-input">
-            <textarea id="systemRole" rows="3" placeholder="הגדר את התפקיד והרקע המקצועי של מנתח השיחות">אתה מומחה לניתוח שיחות ואיש מכירות ותיק עם עשרים שנות ניסיון. נתח את תוכן השיחה הבאה בהתחשב במצבם של שני הצדדים, ופלוט את התוצאה בדיוק לפי הפורמט הקבוע — ללא עיצוב Markdown.</textarea>
+            <textarea id="systemRole" rows="4" placeholder="הגדר את האופי והתפקיד של סוכן NerAI שלך">אתה NerAI — עוזר אישי חכם לוואטסאפ. אתה עוזר למשתמש לנתח שיחות, לנסח הודעות ולתקשר בצורה יעילה ומקצועית. ענה בעברית אלא אם התבקשת אחרת.</textarea>
           </div>
         </div>
       </div>
@@ -2711,6 +2904,15 @@ function showSettingsModal() {
     saveSettings();
     modal.remove();
   });
+
+  // כפתור אשף הגדרת הסוכן — סוגר את ההגדרות ופותח את האשף
+  const openWizardBtn = content.querySelector('.open-wizard-btn');
+  if (openWizardBtn) {
+    openWizardBtn.addEventListener('click', () => {
+      modal.remove();
+      showAgentSetupWizard();
+    });
+  }
 
   // קיפול/פתיחת האפשרויות המתקדמות
   const advancedSettingsToggle = content.querySelector('.advanced-settings-toggle');

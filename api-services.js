@@ -1,6 +1,27 @@
 // NerAI - עוזר AI לוואטסאפ | ניהול שירותי API
 // by Ner Online - neronline.co.il
 
+// הנחיית המערכת הבסיסית של סוכן NerAI — משמשת עד שהמשתמש מגדיר אחת משלו (דרך אשף ה-setup)
+window.NERAI_DEFAULT_SYSTEM_ROLE = 'אתה NerAI — עוזר אישי חכם לוואטסאפ. אתה עוזר למשתמש לנתח שיחות, לנסח הודעות ולתקשר בצורה יעילה ומקצועית. ענה בעברית אלא אם התבקשת אחרת.';
+
+// הפרופיל שממנו נבנתה הנחיית המערכת (נשמר כדי לאפשר עריכה חוזרת באשף)
+window.getAgentProfile = function() {
+  return new Promise((resolve) => {
+    chrome.storage.sync.get(['agentProfile'], (data) => {
+      resolve(data.agentProfile || null);
+    });
+  });
+};
+
+// הנחיית המערכת המאוחדת של הסוכן — מקור אמת יחיד לכל פונקציות ה-AI
+window.getSystemRole = function() {
+  return new Promise((resolve) => {
+    chrome.storage.sync.get(['systemRole'], (data) => {
+      resolve(data.systemRole || window.NERAI_DEFAULT_SYSTEM_ROLE);
+    });
+  });
+};
+
 // מיפוי קודי שפה לשמות (לשימוש בפרומפטים של מודלי השפה)
 window.getLanguageName = function(langCode) {
   const names = {
@@ -376,7 +397,7 @@ window.getAiService = function() {
         'siliconflowApiKey_ai',
         'siliconflowApiUrl_ai',
         'siliconflowModel_ai',
-        'aiSystemRole'
+        'systemRole'
       ],
       function(data) {
         try {
@@ -396,7 +417,8 @@ window.getAiService = function() {
           let apiKey = null;
           let apiUrl = null;
           let model = null;
-          let systemRole = data.aiSystemRole || 'אתה עוזר מקצועי. נתח את השיחה הבאה בתמציתיות וספק סיכום של הנקודות המרכזיות.';
+          // הנחיית המערכת המאוחדת של סוכן NerAI — משותפת לכל פונקציות ה־AI
+          let systemRole = data.systemRole || window.NERAI_DEFAULT_SYSTEM_ROLE;
 
           if (service === 'deepseek') {
             apiKey = data.deepseekApiKey_ai || '';
@@ -443,8 +465,10 @@ async function getPromptSettings() {
 
   return new Promise((resolve) => {
     chrome.storage.sync.get(['systemRole'], (data) => {
+      // אופי הסוכן שהמשתמש הגדיר + הנחיה קבועה לפורמט הניתוח
+      const persona = data.systemRole || window.NERAI_DEFAULT_SYSTEM_ROLE;
       resolve({
-        systemRole: data.systemRole || 'אתה מומחה לניתוח שיחות ואיש מכירות ותיק עם עשרים שנות ניסיון. נתח את תוכן השיחה הבאה בהתחשב במצבם של שני הצדדים, ופלוט את התוצאה בדיוק לפי הפורמט הקבוע — ללא עיצוב Markdown.',
+        systemRole: `${persona}\n\nכעת נתח את השיחה הבאה בהתחשב במצב שני הצדדים, ופלוט את התוצאה בדיוק לפי הפורמט הקבוע — ללא עיצוב Markdown.`,
         analysisTemplate: defaultTemplate
       });
     });
@@ -516,7 +540,9 @@ window.rewriteText = async function(text, tone = 'professional') {
     throw new Error('שיפור ניסוח דורש הפעלת AI והזנת מפתח API בהגדרות');
   }
 
-  const systemPrompt = `אתה עוזר כתיבה להודעות וואטסאפ. שכתב את ההודעה הבאה ב${toneInstructions[tone] || toneInstructions.professional}, באותה שפה שבה היא כתובה. שמור על הכוונה והמידע המקוריים. פלוט אך ורק את הגרסה המשופרת — ללא הסברים, ללא מרכאות וללא חתימה.`;
+  // אופי הסוכן שהמשתמש הגדיר משמש כהקשר — כדי שהניסוח יתאים לזהות שלו
+  const agentContext = cfg.systemRole ? `הקשר על מי שמנסח: ${cfg.systemRole}\n\n` : '';
+  const systemPrompt = `${agentContext}אתה עוזר כתיבה להודעות וואטסאפ. שכתב את ההודעה הבאה ב${toneInstructions[tone] || toneInstructions.professional}, באותה שפה שבה היא כתובה. שמור על הכוונה והמידע המקוריים. פלוט אך ורק את הגרסה המשופרת — ללא הסברים, ללא מרכאות וללא חתימה.`;
 
   const isOpenAi = cfg.service === 'siliconflow';
   const url = isOpenAi
