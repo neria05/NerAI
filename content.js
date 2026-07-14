@@ -355,9 +355,25 @@ function addTranslateButton(textElement) {
     }
   };
 
+  // כפתור בחירת ההודעה — לשיחה צדדית עם הסוכן על הודעות נבחרות
+  const selectBtn = document.createElement('button');
+  selectBtn.className = 'nerai-select-btn';
+  selectBtn.innerHTML = '☑';
+  selectBtn.setAttribute('title', 'בחר הודעה — לשיחה עם NerAI על הודעות נבחרות');
+  selectBtn.onclick = (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    const messageWrapper = textElement.closest('div[data-pre-plain-text]') ||
+                           textElement.closest('[data-id]');
+    if (messageWrapper) {
+      neraiToggleSelect(messageWrapper, textElement, selectBtn);
+    }
+  };
+
   const buttonContainer = document.createElement('div');
   buttonContainer.className = 'translate-btn-container';
   buttonContainer.appendChild(translateBtn);
+  buttonContainer.appendChild(selectBtn);
 
   textElement.appendChild(buttonContainer);
 }
@@ -3724,3 +3740,380 @@ function showToast(message, type = 'success', duration = 3000) {
 
   return toastId;
 }
+
+// ================ בחירת הודעות ושיחה צדדית עם הסוכן ================
+
+// ההודעות שנבחרו — צילום טקסט בזמן הבחירה (עמיד לגלילה שמסירה אלמנטים)
+const neraiSelection = [];
+
+// סימון/ביטול בחירה של הודעה
+function neraiToggleSelect(messageWrapper, textEl, btn) {
+  let id = messageWrapper.getAttribute('data-nerai-sel-id');
+  const idx = id ? neraiSelection.findIndex(s => s.id === id) : -1;
+
+  if (idx >= 0) {
+    // ביטול בחירה
+    neraiSelection.splice(idx, 1);
+    messageWrapper.classList.remove('nerai-selected');
+    if (btn) btn.classList.remove('active');
+  } else {
+    // בחירה — שומרים צילום של הטקסט והכיוון
+    if (!id) {
+      id = 'sel_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
+      messageWrapper.setAttribute('data-nerai-sel-id', id);
+    }
+    const sender = isOutgoingMessage(messageWrapper) ? 'אני' : 'הצד השני';
+    const text = collectTextContent(textEl);
+    if (text) {
+      neraiSelection.push({ id, sender, text });
+      messageWrapper.classList.add('nerai-selected');
+      if (btn) btn.classList.add('active');
+    }
+  }
+
+  updateSelectionBar();
+}
+
+// עדכון סרגל הפעולות הצף לפי מספר ההודעות הנבחרות
+function updateSelectionBar() {
+  let bar = document.querySelector('.nerai-selection-bar');
+
+  if (neraiSelection.length === 0) {
+    if (bar) bar.remove();
+    return;
+  }
+
+  if (!bar) {
+    bar = document.createElement('div');
+    bar.className = 'nerai-selection-bar';
+    bar.setAttribute('dir', 'rtl');
+    bar.innerHTML = `
+      <span class="nerai-sel-info"><b class="nerai-sel-count">0</b> הודעות נבחרו</span>
+      <button class="nerai-sel-chat">💬 שוחח עם NerAI</button>
+      <button class="nerai-sel-clear">נקה</button>
+    `;
+    document.body.appendChild(bar);
+
+    bar.querySelector('.nerai-sel-chat').addEventListener('click', openNeraiSideChat);
+    bar.querySelector('.nerai-sel-clear').addEventListener('click', clearNeraiSelection);
+  }
+
+  bar.querySelector('.nerai-sel-count').textContent = neraiSelection.length;
+}
+
+// ניקוי כל הבחירות
+function clearNeraiSelection() {
+  neraiSelection.length = 0;
+  document.querySelectorAll('.nerai-selected').forEach(el => el.classList.remove('nerai-selected'));
+  document.querySelectorAll('.nerai-select-btn.active').forEach(el => el.classList.remove('active'));
+  updateSelectionBar();
+}
+
+// פתיחת פאנל הצ'אט הצדדי עם הסוכן על ההודעות שנבחרו
+function openNeraiSideChat() {
+  if (neraiSelection.length === 0) return;
+  if (document.querySelector('.nerai-sidechat')) return;
+
+  // בניית טקסט ההקשר מההודעות שנבחרו
+  const contextText = neraiSelection.map(s => `${s.sender}: ${s.text}`).join('\n');
+  const history = [];
+
+  const panel = document.createElement('div');
+  panel.className = 'nerai-sidechat';
+  panel.setAttribute('dir', 'rtl');
+  panel.innerHTML = `
+    <div class="nerai-sidechat-header">
+      <h3>💬 שיחה עם NerAI</h3>
+      <button class="nerai-sidechat-close">×</button>
+    </div>
+    <div class="nerai-sidechat-context">
+      <div class="nerai-context-label">${neraiSelection.length} הודעות בהקשר ▾</div>
+      <div class="nerai-context-body" style="display:none;"></div>
+    </div>
+    <div class="nerai-sidechat-messages"></div>
+    <div class="nerai-sidechat-input">
+      <textarea class="nerai-chat-text" rows="1" placeholder="שאל את NerAI על ההודעות..."></textarea>
+      <button class="nerai-chat-send">שלח</button>
+    </div>
+  `;
+  document.body.appendChild(panel);
+
+  // הצגת ההקשר (טקסט בטוח)
+  const contextBody = panel.querySelector('.nerai-context-body');
+  contextBody.textContent = contextText;
+  panel.querySelector('.nerai-context-label').addEventListener('click', () => {
+    contextBody.style.display = contextBody.style.display === 'none' ? 'block' : 'none';
+  });
+
+  const messagesArea = panel.querySelector('.nerai-sidechat-messages');
+  const input = panel.querySelector('.nerai-chat-text');
+  const sendBtn = panel.querySelector('.nerai-chat-send');
+
+  panel.querySelector('.nerai-sidechat-close').addEventListener('click', () => panel.remove());
+
+  // הוספת בועת הודעה לצ'אט
+  const addBubble = (role, text) => {
+    const bubble = document.createElement('div');
+    bubble.className = `nerai-bubble nerai-bubble-${role}`;
+    bubble.textContent = text;
+    messagesArea.appendChild(bubble);
+    messagesArea.scrollTop = messagesArea.scrollHeight;
+    return bubble;
+  };
+
+  // הודעת פתיחה מהסוכן
+  addBubble('assistant', `בחרת ${neraiSelection.length} הודעות. מה תרצה לדעת עליהן? (למשל: "סכם לי", "מה הצד השני רוצה?", "נסח לי תשובה")`);
+
+  const sendMessage = async () => {
+    const question = input.value.trim();
+    if (!question) return;
+
+    input.value = '';
+    input.style.height = 'auto';
+    addBubble('user', question);
+    history.push({ role: 'user', content: question });
+
+    const thinking = addBubble('assistant', '···');
+    thinking.classList.add('nerai-thinking');
+    sendBtn.disabled = true;
+
+    try {
+      const reply = await window.askAgent(contextText, history);
+      thinking.classList.remove('nerai-thinking');
+      thinking.textContent = reply;
+      history.push({ role: 'assistant', content: reply });
+    } catch (error) {
+      console.error('שגיאה בצ\'אט עם הסוכן:', error);
+      thinking.classList.remove('nerai-thinking');
+      thinking.classList.add('nerai-bubble-error');
+      thinking.textContent = 'שגיאה: ' + (error.message || 'לא ידועה');
+    } finally {
+      sendBtn.disabled = false;
+      messagesArea.scrollTop = messagesArea.scrollHeight;
+    }
+  };
+
+  sendBtn.addEventListener('click', sendMessage);
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      sendMessage();
+    }
+  });
+  // גובה דינמי לתיבת הקלט
+  input.addEventListener('input', () => {
+    input.style.height = 'auto';
+    input.style.height = Math.min(input.scrollHeight, 120) + 'px';
+  });
+
+  input.focus();
+}
+
+// הזרקת סגנונות הבחירה והצ'אט הצדדי
+(function injectSelectionStyles() {
+  const style = document.createElement('style');
+  style.textContent = `
+    .nerai-select-btn {
+      background: #ffffff;
+      color: #7C3AED;
+      border: 1.5px solid #C4B5FD;
+      border-radius: 50%;
+      width: 24px;
+      height: 24px;
+      font-size: 12px;
+      line-height: 1;
+      cursor: pointer;
+      margin-right: 6px;
+      padding: 0;
+      transition: all 0.15s;
+      vertical-align: middle;
+    }
+    .nerai-select-btn:hover { background: #EDE9FE; }
+    .nerai-select-btn.active {
+      background: linear-gradient(135deg, #7C3AED 0%, #06B6D4 100%);
+      color: #ffffff;
+      border-color: transparent;
+    }
+
+    .nerai-selected {
+      outline: 2px solid #7C3AED !important;
+      outline-offset: 2px;
+      border-radius: 8px;
+    }
+
+    .nerai-selection-bar {
+      position: fixed;
+      bottom: 90px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: #ffffff;
+      border-radius: 30px;
+      box-shadow: 0 6px 24px rgba(30, 27, 46, 0.22);
+      padding: 8px 10px 8px 18px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      z-index: 2000;
+      animation: nerai-bar-in 0.25s ease-out;
+      font-family: "Segoe UI", "Heebo", Arial, sans-serif;
+    }
+    @keyframes nerai-bar-in {
+      from { opacity: 0; transform: translate(-50%, 12px); }
+      to { opacity: 1; transform: translate(-50%, 0); }
+    }
+    .nerai-sel-info { font-size: 13px; color: #41525d; }
+    .nerai-sel-info b { color: #7C3AED; }
+    .nerai-sel-chat {
+      background: linear-gradient(135deg, #7C3AED 0%, #5B4CF5 55%, #06B6D4 100%);
+      color: white;
+      border: none;
+      border-radius: 20px;
+      padding: 8px 16px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      font-family: inherit;
+    }
+    .nerai-sel-chat:hover { opacity: 0.92; }
+    .nerai-sel-clear {
+      background: none;
+      border: none;
+      color: #8696a0;
+      font-size: 13px;
+      cursor: pointer;
+      font-family: inherit;
+    }
+    .nerai-sel-clear:hover { color: #41525d; }
+
+    .nerai-sidechat {
+      position: fixed;
+      top: 0;
+      right: 0;
+      width: 380px;
+      max-width: 90vw;
+      height: 100vh;
+      background: #F4F3FB;
+      box-shadow: -6px 0 24px rgba(30, 27, 46, 0.18);
+      z-index: 2001;
+      display: flex;
+      flex-direction: column;
+      animation: nerai-panel-in 0.25s ease-out;
+      font-family: "Segoe UI", "Heebo", Arial, sans-serif;
+    }
+    @keyframes nerai-panel-in {
+      from { transform: translateX(30px); opacity: 0; }
+      to { transform: translateX(0); opacity: 1; }
+    }
+    .nerai-sidechat-header {
+      background: linear-gradient(135deg, #7C3AED 0%, #5B4CF5 55%, #06B6D4 100%);
+      color: white;
+      padding: 16px 18px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .nerai-sidechat-header h3 { margin: 0; font-size: 16px; font-weight: 700; }
+    .nerai-sidechat-close {
+      background: rgba(255,255,255,0.15);
+      border: none;
+      color: white;
+      width: 30px;
+      height: 30px;
+      border-radius: 50%;
+      font-size: 18px;
+      cursor: pointer;
+    }
+    .nerai-sidechat-close:hover { background: rgba(255,255,255,0.3); }
+    .nerai-sidechat-context {
+      background: #EDE9FE;
+      padding: 8px 16px;
+      font-size: 12px;
+      color: #5B21B6;
+      border-bottom: 1px solid #DDD6FE;
+    }
+    .nerai-context-label { cursor: pointer; font-weight: 600; }
+    .nerai-context-body {
+      margin-top: 8px;
+      white-space: pre-wrap;
+      color: #4c4266;
+      max-height: 160px;
+      overflow-y: auto;
+      font-size: 12px;
+      line-height: 1.5;
+    }
+    .nerai-sidechat-messages {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .nerai-bubble {
+      max-width: 85%;
+      padding: 10px 14px;
+      border-radius: 14px;
+      font-size: 14px;
+      line-height: 1.5;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .nerai-bubble-user {
+      align-self: flex-start;
+      background: linear-gradient(135deg, #7C3AED 0%, #06B6D4 100%);
+      color: white;
+      border-bottom-right-radius: 4px;
+    }
+    .nerai-bubble-assistant {
+      align-self: flex-end;
+      background: #ffffff;
+      color: #2b2440;
+      border: 1px solid #E9E5F5;
+      border-bottom-left-radius: 4px;
+    }
+    .nerai-bubble-error { border-color: #FCA5A5 !important; color: #DC2626 !important; }
+    .nerai-thinking { color: #8696a0 !important; letter-spacing: 2px; }
+    .nerai-sidechat-input {
+      padding: 12px;
+      background: #ffffff;
+      border-top: 1px solid #E9E5F5;
+      display: flex;
+      gap: 8px;
+      align-items: flex-end;
+    }
+    .nerai-chat-text {
+      flex: 1;
+      border: 1px solid #D1CCE4;
+      border-radius: 18px;
+      padding: 9px 14px;
+      font-size: 14px;
+      font-family: inherit;
+      resize: none;
+      max-height: 120px;
+      outline: none;
+    }
+    .nerai-chat-text:focus { border-color: #7C3AED; }
+    .nerai-chat-send {
+      background: linear-gradient(135deg, #7C3AED 0%, #06B6D4 100%);
+      color: white;
+      border: none;
+      border-radius: 18px;
+      padding: 9px 18px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      font-family: inherit;
+    }
+    .nerai-chat-send:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    html[data-theme='dark'] .nerai-sidechat,
+    .dark .nerai-sidechat { background: #1f2937; }
+    html[data-theme='dark'] .nerai-bubble-assistant,
+    .dark .nerai-bubble-assistant { background: #374151; color: #e5e7eb; border-color: #4b5563; }
+    html[data-theme='dark'] .nerai-sidechat-input,
+    .dark .nerai-sidechat-input { background: #111827; border-color: #374151; }
+    html[data-theme='dark'] .nerai-chat-text,
+    .dark .nerai-chat-text { background: #1f2937; color: #e5e7eb; border-color: #4b5563; }
+  `;
+  document.head.appendChild(style);
+})();

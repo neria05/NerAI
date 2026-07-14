@@ -580,6 +580,50 @@ window.rewriteText = async function(text, tone = 'professional') {
   return data.choices[0].message.content.trim();
 };
 
+// שיחה עם הסוכן על הודעות שנבחרו — רב־תורית (צ'אט צדדי)
+// contextText: ההודעות שנבחרו | history: [{role:'user'|'assistant', content}]
+window.askAgent = async function(contextText, history) {
+  const cfg = await window.getAiService();
+  if (!cfg.enabled || !cfg.apiKey) {
+    throw new Error('הצ\'אט עם הסוכן דורש הפעלת AI והזנת מפתח API בהגדרות');
+  }
+
+  const systemPrompt = `${cfg.systemRole}\n\nהמשתמש בחר הודעות מסוימות משיחת וואטסאפ ורוצה לשוחח איתך עליהן. אלה ההודעות שנבחרו:\n\n${contextText}\n\nענה על שאלות המשתמש בהתייחס להודעות האלה. היה תמציתי, מעשי וענה בעברית.`;
+
+  const isOpenAi = cfg.service === 'siliconflow';
+  const url = isOpenAi
+    ? (cfg.apiUrl || 'https://api.openai.com/v1/chat/completions')
+    : 'https://api.deepseek.com/v1/chat/completions';
+  const model = isOpenAi ? (cfg.model || 'gpt-4o-mini') : 'deepseek-chat';
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${cfg.apiKey}`
+    },
+    body: JSON.stringify({
+      model,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        ...history
+      ],
+      temperature: 0.7
+    })
+  });
+
+  if (!response.ok) {
+    throw new Error(`שגיאת API: ${response.status} ${response.statusText}`);
+  }
+
+  const data = await response.json();
+  if (!data.choices || !data.choices[0] || !data.choices[0].message) {
+    throw new Error('פורמט תגובת API שגוי: חסרה תשובה');
+  }
+
+  return data.choices[0].message.content.trim();
+};
+
 // טיפול אחיד בשגיאות תרגום
 window.handleTranslationError = (error) => {
   console.error('שגיאת תרגום:', {
