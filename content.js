@@ -1457,6 +1457,9 @@ function addAnalysisButton(messageContainer) {
         <path d="M535.311 49.212a343.944 343.944 0 0 1 330.752 249.615h-84.149a264.614 264.614 0 0 0-59.331-92.702 263.65 263.65 0 0 0-187.272-77.402h-82.16a264.192 264.192 0 0 0-264.735 264.794v58.73a42.104 42.104 0 0 1-3.132 15.54l-87.1 203.415 83.606 16.806c18.553 3.553 31.925 19.877 31.925 38.912v106.496c0 23.13 4.096 39.273 9.818 50.959 5.783 11.625 12.89 19.395 21.745 25.84 17.71 12.65 45.297 18.01 69.632 17.89 16.746 0 32.286-2.53 37.587-3.975 48.248-12.89 132.096-36.081 203.716-55.959 71.68-19.817 131.011-36.382 131.072-36.382l21.504 76.499c-0.12 0.12-238.17 66.56-335.812 92.642a242.748 242.748 0 0 1-58.067 6.746 219.738 219.738 0 0 1-85.775-16.263 148.119 148.119 0 0 1-77.04-72.343c-11.807-24.094-17.89-52.947-17.89-85.654v-73.97l-99.63-19.937a40.237 40.237 0 0 1-27.347-20.54 40.297 40.297 0 0 1-1.385-34.033l103.183-241.002v-50.417A344.124 344.124 0 0 1 453.15 49.212zM734.45 382.615l126.615 394.54h-94.992l-24.214-88.184H618.014l-27.106 88.125h-89.57l131.313-394.481H734.45z m259.915 0v394.48h-92.642v-394.48h92.642zM683.008 458.27h-1.205L635 622.23h88.607l-40.599-163.96z"/>
       </svg>
     </button>
+    <button class="nerai-chat-header-btn" title="צ'אט עם סוכן NerAI — על השיחה הנוכחית או על הודעות שסימנת">
+      <span style="font-size:17px;line-height:1;">💬</span>
+    </button>
   `;
 
   // כפתור הגדרות
@@ -1578,6 +1581,11 @@ function addAnalysisButton(messageContainer) {
     await analyzeConversation(messageContainer);
   });
 
+  // כפתור צ'אט עם הסוכן — נפתח עם ההודעות שסומנו, או עם השיחה האחרונה
+  buttonContainer.querySelector('.nerai-chat-header-btn').addEventListener('click', () => {
+    openNeraiSideChat();
+  });
+
   const styles = `
     .analysis-btn-container {
       display: flex;
@@ -1588,7 +1596,8 @@ function addAnalysisButton(messageContainer) {
 
     .settings-btn,
     .translate-all-btn,
-    .analysis-btn {
+    .analysis-btn,
+    .nerai-chat-header-btn {
       background: none;
       border: none;
       padding: 4px;
@@ -1605,7 +1614,8 @@ function addAnalysisButton(messageContainer) {
 
     .settings-btn:hover,
     .translate-all-btn:hover,
-    .analysis-btn:hover {
+    .analysis-btn:hover,
+    .nerai-chat-header-btn:hover {
       background-color: rgba(124, 58, 237, 0.1);
       color: #7C3AED;
     }
@@ -3885,13 +3895,47 @@ function clearNeraiSelection() {
   updateSelectionBar();
 }
 
-// פתיחת פאנל הצ'אט הצדדי עם הסוכן על ההודעות שנבחרו
+// איסוף ההודעות האחרונות בשיחה הפתוחה — הקשר ברירת מחדל לצ'אט
+function collectRecentMessages(limit = 15) {
+  const rows = Array.from(document.querySelectorAll('#main div[data-pre-plain-text]')).slice(-limit);
+  const items = [];
+  rows.forEach(row => {
+    const textEl = row.querySelector('.selectable-text');
+    if (!textEl) return;
+    const text = collectTextContent(textEl);
+    if (!text) return;
+    items.push({ sender: isOutgoingMessage(row) ? 'אני' : 'הצד השני', text });
+  });
+  return items;
+}
+
+// פתיחת פאנל הצ'אט הצדדי עם הסוכן
+// עם הודעות שסומנו — הן ההקשר; בלי סימון — ההודעות האחרונות בשיחה
 function openNeraiSideChat() {
-  if (neraiSelection.length === 0) return;
   if (document.querySelector('.nerai-sidechat')) return;
 
-  // בניית טקסט ההקשר מההודעות שנבחרו
-  const contextText = neraiSelection.map(s => `${s.sender}: ${s.text}`).join('\n');
+  let contextItems;
+  let contextLabel;
+  let welcome;
+
+  if (neraiSelection.length > 0) {
+    contextItems = neraiSelection.slice();
+    contextLabel = `${contextItems.length} הודעות שסימנת בהקשר ▾`;
+    welcome = `בחרת ${contextItems.length} הודעות. מה תרצה לדעת עליהן? (למשל: "סכם לי", "מה הצד השני רוצה?", "נסח לי תשובה")`;
+  } else {
+    contextItems = collectRecentMessages();
+    if (contextItems.length > 0) {
+      contextLabel = `${contextItems.length} ההודעות האחרונות בשיחה בהקשר ▾`;
+      welcome = 'היי! אני רואה את ההודעות האחרונות בשיחה. מה תרצה? (למשל: "סכם לי את השיחה", "נסח תשובה", או כל שאלה אחרת)\n\nטיפ: אפשר גם לסמן הודעות ספציפיות עם ☑ ואז לפתוח אותי.';
+    } else {
+      contextLabel = 'ללא הקשר שיחה';
+      welcome = 'היי! אני הסוכן האישי שלך. אין כרגע הודעות בהקשר — אבל אפשר לשאול אותי הכל, או לסמן הודעות עם ☑ כדי לשוחח עליהן.';
+    }
+  }
+
+  const contextText = contextItems.length > 0
+    ? contextItems.map(s => `${s.sender}: ${s.text}`).join('\n')
+    : 'אין הודעות בהקשר.';
   const history = [];
 
   const panel = document.createElement('div');
@@ -3903,16 +3947,18 @@ function openNeraiSideChat() {
       <button class="nerai-sidechat-close">×</button>
     </div>
     <div class="nerai-sidechat-context">
-      <div class="nerai-context-label">${neraiSelection.length} הודעות בהקשר ▾</div>
+      <div class="nerai-context-label"></div>
       <div class="nerai-context-body" style="display:none;"></div>
     </div>
     <div class="nerai-sidechat-messages"></div>
     <div class="nerai-sidechat-input">
-      <textarea class="nerai-chat-text" rows="1" placeholder="שאל את NerAI על ההודעות..."></textarea>
+      <textarea class="nerai-chat-text" rows="1" placeholder="שאל את NerAI..."></textarea>
       <button class="nerai-chat-send">שלח</button>
     </div>
   `;
   document.body.appendChild(panel);
+
+  panel.querySelector('.nerai-context-label').textContent = contextLabel;
 
   // הצגת ההקשר (טקסט בטוח)
   const contextBody = panel.querySelector('.nerai-context-body');
@@ -3938,7 +3984,7 @@ function openNeraiSideChat() {
   };
 
   // הודעת פתיחה מהסוכן
-  addBubble('assistant', `בחרת ${neraiSelection.length} הודעות. מה תרצה לדעת עליהן? (למשל: "סכם לי", "מה הצד השני רוצה?", "נסח לי תשובה")`);
+  addBubble('assistant', welcome);
 
   const sendMessage = async () => {
     const question = input.value.trim();
