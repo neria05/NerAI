@@ -230,6 +230,21 @@ function isOutgoingMessage(element) {
   return false;
 }
 
+// חילוץ שם השולח האמיתי של הודעה — חשוב בקבוצות
+// וואטסאפ שם את השם בתוך data-pre-plain-text בפורמט: "[שעה, תאריך] שם: "
+function getMessageSender(row) {
+  if (isOutgoingMessage(row)) return 'אני';
+
+  const preText = row.getAttribute
+    ? (row.getAttribute('data-pre-plain-text') || '')
+    : '';
+  const match = preText.match(/\]\s*([^:]+):\s*$/);
+  if (match && match[1].trim()) {
+    return match[1].trim();
+  }
+  return 'הצד השני';
+}
+
 // שליפת שפת היעד היוצאת ששמורה לאיש הקשר הנוכחי
 // (אותו מנגנון זיכרון של תרגום תיבת ההקלדה — מפתח chatLanguagePreferences)
 function getOutgoingLanguage() {
@@ -1866,9 +1881,13 @@ async function analyzeConversation(messageContainer) {
           </div>
           <div class="chat-messages"></div>
         </div>
-        <div class="analysis-actions">
-          <button class="export-chat" style="background: #f5f5f5; border: 1px solid #ddd; color: #666; padding: 8px 16px; border-radius: 4px; margin-left: 12px; cursor: pointer;">ייצוא שיחה</button>
-          <button class="start-analysis">התחל ניתוח</button>
+        <div class="custom-ask" style="margin: 4px 0 10px;">
+          <textarea class="custom-ask-text" rows="2" placeholder='בקשה חופשית לסוכן (רשות) — למשל: "סכם את השיח ותעד אם דובר על באגים"' style="width: 100%; padding: 10px; border: 1px solid #e9edef; border-radius: 8px; font-size: 13px; font-family: inherit; box-sizing: border-box; resize: vertical;"></textarea>
+        </div>
+        <div class="analysis-actions" style="display: flex; align-items: center; justify-content: flex-start; gap: 8px;">
+          <button class="start-analysis">ניתוח מלא</button>
+          <button class="ask-agent-btn" style="background: linear-gradient(135deg, #F59E0B 0%, #F43F5E 100%); color: white; border: none; padding: 8px 16px; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer;">💬 שאל את הסוכן</button>
+          <button class="export-chat" style="background: #f5f5f5; border: 1px solid #ddd; color: #666; padding: 8px 16px; border-radius: 8px; cursor: pointer; margin-right: auto;">ייצוא</button>
         </div>
       </div>
     `;
@@ -1886,9 +1905,9 @@ async function analyzeConversation(messageContainer) {
       const preText = element.getAttribute('data-pre-plain-text');
       let time = '';
       let text = '';
-      // זיהוי הודעות שלי לפי data-id (עם גיבוי למחלקות הישנות)
+      // זיהוי הודעות שלי + שם השולח האמיתי (חשוב בקבוצות)
       let isMe = isOutgoingMessage(element);
-      let sender = isMe ? 'אני' : 'הצד השני';
+      let sender = getMessageSender(element);
 
       // חילוץ השעה מהמאפיין data-pre-plain-text
       if (preText) {
@@ -2058,6 +2077,28 @@ async function analyzeConversation(messageContainer) {
         });
         showAnalysisError(messageContainer, error.message);
       }
+    });
+
+    // כפתור "שאל את הסוכן" — בקשה חופשית על ההודעות שנבחרו, בצ'אט הצדדי
+    panel.querySelector('.ask-agent-btn').addEventListener('click', () => {
+      const selectedItems = Array.from(panel.querySelectorAll('.chat-message input[type="checkbox"]:checked'))
+        .map(cb => ({
+          sender: cb.dataset.sender,
+          text: cb.dataset.text
+        }));
+
+      if (selectedItems.length === 0) {
+        console.warn('לא נבחרו הודעות לשאילת הסוכן');
+        return;
+      }
+
+      const question = panel.querySelector('.custom-ask-text').value.trim();
+      panel.remove();
+
+      openNeraiSideChat({
+        items: selectedItems,
+        initialQuestion: question || null
+      });
     });
 
     // כפתור סגירה
@@ -3848,7 +3889,7 @@ function neraiToggleSelect(messageWrapper, textEl, btn) {
       id = 'sel_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
       messageWrapper.setAttribute('data-nerai-sel-id', id);
     }
-    const sender = isOutgoingMessage(messageWrapper) ? 'אני' : 'הצד השני';
+    const sender = getMessageSender(messageWrapper);
     const text = collectTextContent(textEl);
     if (text) {
       neraiSelection.push({ id, sender, text });
@@ -3904,21 +3945,26 @@ function collectRecentMessages(limit = 15) {
     if (!textEl) return;
     const text = collectTextContent(textEl);
     if (!text) return;
-    items.push({ sender: isOutgoingMessage(row) ? 'אני' : 'הצד השני', text });
+    items.push({ sender: getMessageSender(row), text });
   });
   return items;
 }
 
 // פתיחת פאנל הצ'אט הצדדי עם הסוכן
-// עם הודעות שסומנו — הן ההקשר; בלי סימון — ההודעות האחרונות בשיחה
-function openNeraiSideChat() {
+// options.items — הקשר מפורש (מפאנל הניתוח) | options.initialQuestion — שאלה שנשלחת מיד
+// בלי options: הודעות שסומנו אם יש, אחרת ההודעות האחרונות בשיחה
+function openNeraiSideChat(options = {}) {
   if (document.querySelector('.nerai-sidechat')) return;
 
   let contextItems;
   let contextLabel;
   let welcome;
 
-  if (neraiSelection.length > 0) {
+  if (Array.isArray(options.items) && options.items.length > 0) {
+    contextItems = options.items;
+    contextLabel = `${contextItems.length} הודעות נבחרות בהקשר ▾`;
+    welcome = `קיבלתי ${contextItems.length} הודעות מהניתוח. מה תרצה לדעת עליהן?`;
+  } else if (neraiSelection.length > 0) {
     contextItems = neraiSelection.slice();
     contextLabel = `${contextItems.length} הודעות שסימנת בהקשר ▾`;
     welcome = `בחרת ${contextItems.length} הודעות. מה תרצה לדעת עליהן? (למשל: "סכם לי", "מה הצד השני רוצה?", "נסח לי תשובה")`;
@@ -4039,6 +4085,12 @@ function openNeraiSideChat() {
   });
 
   input.focus();
+
+  // בקשה פותחת (מכפתור "שאל את הסוכן" בפאנל הניתוח) — נשלחת מיד
+  if (options.initialQuestion) {
+    input.value = options.initialQuestion;
+    sendMessage();
+  }
 }
 
 // הזרקת סגנונות הבחירה והצ'אט הצדדי
