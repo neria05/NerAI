@@ -3923,14 +3923,30 @@ function csvCell(value) {
   return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
 }
 
+// בדיקה אם טקסט הוא שם משתתף תקין (ולא "+286 נוספים", מספר, וכו')
+function isValidMemberName(name) {
+  if (!name) return false;
+  const n = name.trim();
+  if (n.length < 1 || n.length > 40) return false;
+  if (/נוספים|נוספות|\bothers\b|\bmore\b/i.test(n)) return false;
+  if (/^\+?\d[\d\s]*$/.test(n)) return false; // מספר בלבד / "+286"
+  return true;
+}
+
 // שם השיחה/קבוצה הנוכחית — לשימוש בשמות קבצים
+// שם הקבוצה הוא הכותרת ללא פסיקים (רשימת החברים תמיד מכילה פסיקים)
 function getCurrentChatName() {
   const header = document.querySelector('#main header');
   if (header) {
-    const title = header.querySelector('span[dir="auto"][title], span[title]');
-    if (title) {
-      const name = (title.getAttribute('title') || title.textContent || '').trim();
-      if (name) return name.replace(/[\\/:*?"<>|]/g, '_').slice(0, 50);
+    const candidates = header.querySelectorAll('span[title], span[dir="auto"]');
+    for (const el of candidates) {
+      const name = (el.getAttribute('title') || el.textContent || '').trim();
+      if (name &&
+          name.length >= 1 && name.length <= 50 &&
+          !name.includes(',') &&                       // רשימת חברים → לדלג
+          !/נוספים|others|^\+?\d/i.test(name)) {        // כותרת משנה/מספר → לדלג
+        return name.replace(/[\\/:*?"<>|]/g, '_').slice(0, 50);
+      }
     }
   }
   return 'שיחה';
@@ -3943,6 +3959,7 @@ window.NERAI_BUILTIN_TOOLS.push({
   params: [],
   execute: async () => {
     const members = new Set();
+    const chatName = getCurrentChatName();
 
     // מקור 1: שורת המשנה בכותרת הקבוצה — רשימת שמות מופרדת בפסיקים
     const header = document.querySelector('#main header');
@@ -3953,7 +3970,7 @@ window.NERAI_BUILTIN_TOOLS.push({
         if (t.includes(',') && t.split(',').length >= 2 && !t.includes(':') && t.length > 5) {
           t.split(',').forEach(name => {
             const clean = name.trim();
-            if (clean && clean.length < 40) members.add(clean);
+            if (isValidMemberName(clean)) members.add(clean);
           });
         }
       });
@@ -3962,26 +3979,24 @@ window.NERAI_BUILTIN_TOOLS.push({
     // מקור 2: שמות השולחים מההודעות הטעונות בשיחה
     document.querySelectorAll('#main div[data-pre-plain-text]').forEach(row => {
       const sender = getMessageSender(row);
-      if (sender && sender !== 'אני' && sender !== 'הצד השני') {
+      if (sender && sender !== 'אני' && sender !== 'הצד השני' && isValidMemberName(sender)) {
         members.add(sender);
       }
     });
 
-    // "אתה"/"את/ה" מהכותרת זה המשתמש עצמו
-    members.delete('אתה');
-    members.delete('את/ה');
-    members.delete('You');
+    // סינון: המשתמש עצמו + שם הקבוצה (לא אמורים להופיע כחברים)
+    ['אתה', 'את/ה', 'You'].forEach(x => members.delete(x));
+    if (chatName) members.delete(chatName);
 
     if (members.size === 0) {
       return 'לא הצלחתי לזהות משתתפים. ייתכן שזו שיחה פרטית (לא קבוצה), או שהכותרת לא מציגה את הרשימה. אפשר לגלול מעלה בשיחה כדי לטעון עוד הודעות ולנסות שוב.';
     }
 
     const list = Array.from(members).sort();
-    const chatName = getCurrentChatName();
 
-    // בניית תוכן ה-CSV
-    const rows = [['#', 'שם', 'קבוצה']];
-    list.forEach((name, i) => rows.push([i + 1, name, chatName]));
+    // בניית תוכן ה-CSV — עמודת שם בלבד (שם הקבוצה בשם הקובץ)
+    const rows = [['#', 'שם']];
+    list.forEach((name, i) => rows.push([i + 1, name]));
     const csv = rows.map(r => r.map(csvCell).join(',')).join('\n');
 
     const date = new Date().toISOString().slice(0, 10);
