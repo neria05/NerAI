@@ -589,6 +589,10 @@ window.getAgentTools = function() {
   });
 };
 
+// כלים מובנים — פועלים על נתוני וואטסאפ מקומית (נרשמים מ-content.js)
+// מבנה: { name, description, params, execute: async (args) => string }
+window.NERAI_BUILTIN_TOOLS = window.NERAI_BUILTIN_TOOLS || [];
+
 // המרת כלי NerAI לפורמט function-calling של OpenAI/DeepSeek
 function neraiToolToApiFormat(tool) {
   const properties = {};
@@ -671,9 +675,13 @@ window.askAgent = async function(contextText, history, onToolCall) {
     throw new Error('הצ\'אט עם הסוכן דורש הפעלת AI והזנת מפתח API בהגדרות');
   }
 
-  const tools = await window.getAgentTools();
+  // כלים = מובנים (גישה לנתוני וואטסאפ) + חיצוניים (webhooks של המשתמש)
+  const webhookTools = await window.getAgentTools();
+  const builtinTools = Array.isArray(window.NERAI_BUILTIN_TOOLS) ? window.NERAI_BUILTIN_TOOLS : [];
+  const tools = [...builtinTools, ...webhookTools];
+
   const toolsNote = tools.length > 0
-    ? `\n\nיש לך גישה לכלים חיצוניים. השתמש בהם כשהמשתמש מבקש פעולה שהם מתאימים לה (למשל הוספה ליומן, יצירת משימה).`
+    ? `\n\nיש לך גישה לכלים. השתמש בהם כשהמשתמש מבקש פעולה שהם מתאימים לה (למשל רשימת משתתפי הקבוצה, הוספה ליומן, יצירת משימה).`
     : '';
 
   const systemPrompt = `${cfg.systemRole}\n\n---\nהמשתמש שאתה משרת (הבעלים שלך) פתח איתך צ'אט לצד שיחת וואטסאפ. אלה ההודעות שבהקשר:\n\n${contextText}\n\nכללים: כשנשאל על "אנחנו", "העסק" או פרטים עסקיים — ענה מתוך המידע שבהנחיה שלך למעלה; אל תגיד שלא סיפרו לך אם המידע קיים שם. ענה על שאלות בהתייחס להודעות שבהקשר. היה תמציתי, מעשי וענה בעברית.${toolsNote}`;
@@ -705,9 +713,20 @@ window.askAgent = async function(contextText, history, onToolCall) {
         onToolCall({ name: call.function.name, args });
       }
 
-      const result = tool
-        ? await callToolWebhook(tool, args)
-        : `הכלי "${call.function.name}" לא נמצא`;
+      // כלי מובנה מורץ מקומית; כלי משתמש נשלח ל-webhook
+      let result;
+      if (tool && typeof tool.execute === 'function') {
+        try {
+          result = await tool.execute(args);
+        } catch (execError) {
+          console.error('שגיאה בהרצת כלי מובנה:', execError);
+          result = 'שגיאה בהרצת הכלי: ' + execError.message;
+        }
+      } else if (tool) {
+        result = await callToolWebhook(tool, args);
+      } else {
+        result = `הכלי "${call.function.name}" לא נמצא`;
+      }
 
       messages.push({
         role: 'tool',
@@ -718,6 +737,42 @@ window.askAgent = async function(contextText, history, onToolCall) {
   }
 
   return 'הסוכן ביצע את הפעולות המבוקשות.';
+};
+
+// תשובות מהירות חכמות — 3 הצעות תגובה לפי סוף השיחה ואופי הסוכן
+window.suggestReplies = async function(contextText) {
+  const cfg = await window.getAiService();
+  if (!cfg.enabled || !cfg.apiKey) {
+    throw new Error('תשובות מהירות דורשות הפעלת AI והזנת מפתח API בהגדרות');
+  }
+
+  const systemPrompt = `${cfg.systemRole}\n\nלפניך סוף שיחת וואטסאפ. הצע בדיוק 3 תשובות קצרות וטבעיות שהמשתמש ("אני") יכול לשלוח עכשיו, בשפה שבה מתנהלת השיחה. גוון את הסגנונות (למשל: מאשרת, שאלת המשך, עניינית). החזר JSON בלבד, בלי שום טקסט נוסף: ["תשובה 1", "תשובה 2", "תשובה 3"]`;
+
+  const message = await chatCompletion(cfg, [
+    { role: 'system', content: systemPrompt },
+    { role: 'user', content: contextText }
+  ], null);
+
+  const content = (message.content || '').trim();
+
+  // ניסיון ראשון: JSON תקין
+  const jsonMatch = content.match(/\[[\s\S]*\]/);
+  if (jsonMatch) {
+    try {
+      const arr = JSON.parse(jsonMatch[0]);
+      if (Array.isArray(arr) && arr.length > 0) {
+        return arr.slice(0, 3).map(String);
+      }
+    } catch (parseError) {
+      console.warn('פירוק JSON של ההצעות נכשל, עובר לפירוק שורות');
+    }
+  }
+
+  // גיבוי: פירוק לפי שורות
+  return content.split('\n')
+    .map(line => line.replace(/^[\d\-.*\s"']+|["',]+$/g, '').trim())
+    .filter(Boolean)
+    .slice(0, 3);
 };
 
 // טיפול אחיד בשגיאות תרגום

@@ -3898,6 +3898,55 @@ function showToast(message, type = 'success', duration = 3000) {
   return toastId;
 }
 
+// ================ כלים מובנים של הסוכן (גישה לנתוני וואטסאפ) ================
+
+window.NERAI_BUILTIN_TOOLS = window.NERAI_BUILTIN_TOOLS || [];
+
+// כלי: רשימת המשתתפים בשיחה/קבוצה הנוכחית
+window.NERAI_BUILTIN_TOOLS.push({
+  name: 'get_group_members',
+  description: 'מחזיר את רשימת המשתתפים בקבוצה/שיחה הפתוחה כרגע. השתמש כשמבקשים רשימת חברים, משתתפים, או "מי בקבוצה".',
+  params: [],
+  execute: async () => {
+    const members = new Set();
+
+    // מקור 1: שורת המשנה בכותרת הקבוצה — רשימת שמות מופרדת בפסיקים
+    const header = document.querySelector('#main header');
+    if (header) {
+      header.querySelectorAll('span').forEach(span => {
+        const t = (span.textContent || '').trim();
+        // מזהים רשימת שמות: מכילה פסיקים, בלי נקודתיים (שמסמנים הודעה)
+        if (t.includes(',') && t.split(',').length >= 2 && !t.includes(':') && t.length > 5) {
+          t.split(',').forEach(name => {
+            const clean = name.trim();
+            if (clean && clean.length < 40) members.add(clean);
+          });
+        }
+      });
+    }
+
+    // מקור 2: שמות השולחים מההודעות הטעונות בשיחה
+    document.querySelectorAll('#main div[data-pre-plain-text]').forEach(row => {
+      const sender = getMessageSender(row);
+      if (sender && sender !== 'אני' && sender !== 'הצד השני') {
+        members.add(sender);
+      }
+    });
+
+    // "אתה"/"את/ה" מהכותרת זה המשתמש עצמו
+    members.delete('אתה');
+    members.delete('את/ה');
+    members.delete('You');
+
+    if (members.size === 0) {
+      return 'לא הצלחתי לזהות משתתפים. ייתכן שזו שיחה פרטית (לא קבוצה), או שהכותרת לא מציגה את הרשימה. אפשר לגלול מעלה בשיחה כדי לטעון עוד הודעות ולנסות שוב.';
+    }
+
+    const list = Array.from(members).sort();
+    return `זוהו ${list.length} משתתפים (מהכותרת ומההודעות הטעונות):\n${list.map((m, i) => `${i + 1}. ${m}`).join('\n')}`;
+  }
+});
+
 // ================ בחירת הודעות ושיחה צדדית עם הסוכן ================
 
 // ההודעות שנבחרו — צילום טקסט בזמן הבחירה (עמיד לגלילה שמסירה אלמנטים)

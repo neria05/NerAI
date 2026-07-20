@@ -205,7 +205,12 @@ function addInputTranslateButton() {
     rewriteBtn.classList.add('input-rewrite-btn');
     container.parentNode.insertBefore(rewriteBtn, translateBtn.nextSibling);
 
-    console.log('NerAI: כפתורי תרגום ושיפור ניסוח נוספו לתיבת ההקלדה');
+    // כפתור תשובות מהירות (💡) — הצעות תגובה לפי סוף השיחה
+    const suggestBtn = createSmartReplyButton();
+    suggestBtn.classList.add('input-suggest-btn');
+    container.parentNode.insertBefore(suggestBtn, rewriteBtn.nextSibling);
+
+    console.log('NerAI: כפתורי תרגום, שיפור ניסוח ותשובות מהירות נוספו לתיבת ההקלדה');
     return true;
   } catch (error) {
     console.error('שגיאה בהוספת כפתור התרגום:', error);
@@ -272,6 +277,164 @@ function createRewriteButton() {
   };
 
   return button;
+}
+
+// יצירת כפתור התשובות המהירות (💡) — הצעות תגובה חכמות
+function createSmartReplyButton() {
+  const button = document.createElement('button');
+  button.setAttribute('title', 'NerAI: הצעות תגובה חכמות לפי השיחה');
+  button.setAttribute('aria-label', 'הצעות תגובה חכמות');
+  button.innerHTML = '<span aria-hidden="true" style="font-size:17px;line-height:1;">💡</span>';
+
+  button.style.cssText = `
+    background: linear-gradient(135deg, #06B6D4 0%, #3B82F6 100%);
+    color: #ffffff;
+    border: none;
+    border-radius: 50%;
+    width: 38px;
+    height: 38px;
+    min-width: 38px;
+    margin: 0 2px;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    align-self: center;
+    flex-shrink: 0;
+    cursor: pointer;
+    box-shadow: 0 2px 8px rgba(59, 130, 246, 0.35);
+    transition: transform 0.15s, box-shadow 0.15s, opacity 0.15s;
+  `;
+
+  button.addEventListener('mouseenter', () => {
+    button.style.transform = 'translateY(-1px) scale(1.06)';
+    button.style.boxShadow = '0 4px 12px rgba(59, 130, 246, 0.5)';
+  });
+
+  button.addEventListener('mouseleave', () => {
+    button.style.transform = 'none';
+    button.style.boxShadow = '0 2px 8px rgba(59, 130, 246, 0.35)';
+  });
+
+  button.onclick = async (e) => {
+    e.stopPropagation();
+
+    // סרגל הצעות פתוח? סוגרים
+    const existing = document.querySelector('.nerai-suggestions-bar');
+    if (existing) {
+      existing.remove();
+      return;
+    }
+
+    // הקשר: ההודעות האחרונות בשיחה (הפונקציה מוגדרת ב-content.js)
+    const items = typeof collectRecentMessages === 'function' ? collectRecentMessages(10) : [];
+    if (items.length === 0) {
+      alert('לא נמצאו הודעות בשיחה — פתח שיחה עם הודעות ונסה שוב');
+      return;
+    }
+
+    const contextText = items.map(s => `${s.sender}: ${s.text}`).join('\n');
+
+    // מצב טעינה על הכפתור
+    button.disabled = true;
+    button.style.opacity = '0.6';
+    button.innerHTML = '<span aria-hidden="true" style="font-size:15px;line-height:1;">⏳</span>';
+
+    try {
+      const suggestions = await window.suggestReplies(contextText);
+      if (!suggestions || suggestions.length === 0) {
+        throw new Error('לא התקבלו הצעות');
+      }
+      showSuggestionsBar(suggestions);
+    } catch (error) {
+      console.error('הפקת התשובות המהירות נכשלה:', error);
+      showTranslationError('הצעות תגובה נכשלו: ' + (error.message || 'שגיאה לא ידועה'));
+    } finally {
+      button.disabled = false;
+      button.style.opacity = '1';
+      button.innerHTML = '<span aria-hidden="true" style="font-size:17px;line-height:1;">💡</span>';
+    }
+  };
+
+  return button;
+}
+
+// סרגל שבבי ההצעות — מוצג מעל תיבת ההקלדה, לחיצה מכניסה לתיבה
+function showSuggestionsBar(suggestions) {
+  document.querySelector('.nerai-suggestions-bar')?.remove();
+
+  const bar = document.createElement('div');
+  bar.className = 'nerai-suggestions-bar';
+  bar.setAttribute('dir', 'rtl');
+  bar.style.cssText = `
+    position: fixed;
+    bottom: 78px;
+    left: 50%;
+    transform: translateX(-50%);
+    max-width: min(720px, 92vw);
+    background: #ffffff;
+    border-radius: 14px;
+    box-shadow: 0 8px 28px rgba(30, 27, 46, 0.25);
+    padding: 10px 12px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    z-index: 2000;
+    font-family: "Segoe UI", "Heebo", Arial, sans-serif;
+  `;
+
+  const label = document.createElement('span');
+  label.textContent = '💡';
+  label.style.cssText = 'font-size: 16px;';
+  bar.appendChild(label);
+
+  suggestions.forEach(text => {
+    const chip = document.createElement('button');
+    chip.textContent = text;
+    chip.setAttribute('title', 'לחץ להכנסה לתיבת ההקלדה');
+    chip.style.cssText = `
+      background: #F4F3FB;
+      color: #2b2440;
+      border: 1px solid #DDD6FE;
+      border-radius: 18px;
+      padding: 8px 14px;
+      font-size: 13px;
+      cursor: pointer;
+      font-family: inherit;
+      max-width: 260px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      transition: all 0.15s;
+    `;
+    chip.addEventListener('mouseenter', () => {
+      chip.style.background = '#EDE9FE';
+      chip.style.borderColor = '#7C3AED';
+    });
+    chip.addEventListener('mouseleave', () => {
+      chip.style.background = '#F4F3FB';
+      chip.style.borderColor = '#DDD6FE';
+    });
+    chip.addEventListener('click', async () => {
+      try {
+        await applyTextToComposer(text);
+        bar.remove();
+      } catch (error) {
+        console.error('הכנסת ההצעה לתיבה נכשלה:', error);
+      }
+    });
+    bar.appendChild(chip);
+  });
+
+  const closeBtn = document.createElement('button');
+  closeBtn.textContent = '×';
+  closeBtn.setAttribute('title', 'סגור');
+  closeBtn.style.cssText = 'background:none;border:none;color:#8696a0;font-size:18px;cursor:pointer;padding:0 4px;font-family:inherit;';
+  closeBtn.addEventListener('click', () => bar.remove());
+  bar.appendChild(closeBtn);
+
+  document.body.appendChild(bar);
 }
 
 // מודאל שיפור הניסוח — בחירת סגנון, שכתוב והחלה לתיבה
