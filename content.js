@@ -2482,6 +2482,7 @@ function showAnalysisError(container, message) {
 // ========================= אשף הגדרת סוכן NerAI =========================
 
 // הרכבת הנחיית מערכת מותאמת מתשובות המשתמש (ללא צורך ב-AI — מיידי וחינמי)
+// המבנה: זהות → כרטיס ידע על העסק → סגנון ומטרה → כללים
 function composeSystemPrompt(p) {
   const toneMap = {
     professional: 'מקצועי, מכובד וברור',
@@ -2496,17 +2497,34 @@ function composeSystemPrompt(p) {
     general: 'לתקשר בצורה ברורה, יעילה ואנושית'
   };
 
-  let prompt = `אתה NerAI — עוזר ה-AI האישי של ${p.business ? p.business : 'המשתמש'}.`;
-  if (p.audience) {
-    prompt += ` אתה מסייע בתקשורת מול ${p.audience}.`;
+  const owner = p.businessName || p.business || 'המשתמש';
+  const lines = [];
+
+  lines.push(`אתה NerAI — הסוכן האישי של ${owner}. אתה פועל בשם המשתמש ומסייע לו בשיחות הוואטסאפ שלו.`);
+
+  // כרטיס הידע — מוצג למודל כמידע שהוא אמור לדעת ולהשתמש בו
+  const facts = [];
+  if (p.businessName) facts.push(`שם העסק: ${p.businessName}`);
+  if (p.business) facts.push(`תחום העיסוק: ${p.business}`);
+  if (p.audience) facts.push(`עם מי מתכתבים בדרך כלל: ${p.audience}`);
+  if (p.details && p.details.trim()) facts.push(`פרטים חשובים: ${p.details.trim()}`);
+
+  if (facts.length > 0) {
+    lines.push('');
+    lines.push('זה המידע שאתה יודע על העסק והמשתמש. כשנשאל על "אנחנו", "העסק שלנו" או פרטים דומים — ענה מתוך המידע הזה:');
+    facts.forEach(f => lines.push(`- ${f}`));
   }
-  prompt += ` הטון שלך תמיד ${toneMap[p.tone] || toneMap.professional}.`;
-  prompt += ` המטרה המרכזית שלך היא ${goalMap[p.goal] || goalMap.general}.`;
+
+  lines.push('');
+  lines.push(`הטון שלך תמיד ${toneMap[p.tone] || toneMap.professional}. המטרה המרכזית שלך היא ${goalMap[p.goal] || goalMap.general}.`);
+
   if (p.notes && p.notes.trim()) {
-    prompt += ` הנחיות נוספות חשובות: ${p.notes.trim()}.`;
+    lines.push(`הנחיות נוספות חשובות: ${p.notes.trim()}.`);
   }
-  prompt += ` ענה תמיד בעברית אלא אם התבקשת אחרת, והתאם את סגנונך להקשר של שיחת וואטסאפ — קצר, טבעי ולעניין.`;
-  return prompt;
+
+  lines.push('ענה תמיד בעברית אלא אם התבקשת אחרת, בסגנון מותאם לשיחת וואטסאפ — קצר, טבעי ולעניין. אם נשאל על מידע עסקי שאין לך — אמור זאת בכנות והצע שהמשתמש יוסיף אותו בהגדרות הסוכן.');
+
+  return lines.join('\n');
 }
 
 // אשף ה-setup — שאלות בסיסיות → הנחיית מערכת לסוכן (ניתנת לעריכה)
@@ -2534,8 +2552,18 @@ async function showAgentSetupWizard() {
         <p style="margin: 0 0 20px; color: #555; font-size: 14px;">כמה שאלות קצרות, וניצור לך סוכן AI מותאם אישית. תוכל לערוך הכל אחר כך.</p>
 
         <div class="api-key-input">
-          <label>במה אתה עוסק? (שם העסק / התחום)</label>
+          <label>שם העסק / המותג</label>
+          <input type="text" id="wiz-businessname" placeholder="לדוגמה: Ner Online" value="${(existingProfile.businessName || '').replace(/"/g, '&quot;')}">
+        </div>
+
+        <div class="api-key-input">
+          <label>במה אתה עוסק? (התחום)</label>
           <input type="text" id="wiz-business" placeholder="לדוגמה: ייעוץ פיננסי, חנות בגדים, סוכנות ביטוח" value="${(existingProfile.business || '').replace(/"/g, '&quot;')}">
+        </div>
+
+        <div class="api-key-input">
+          <label>פרטים שהסוכן חייב להכיר (רשות)</label>
+          <textarea id="wiz-details" rows="2" placeholder="שירותים, מחירים, אתר, שעות פעילות — כל מה שהסוכן צריך כדי לענות על שאלות">${existingProfile.details || ''}</textarea>
         </div>
 
         <div class="api-key-input">
@@ -2600,7 +2628,9 @@ async function showAgentSetupWizard() {
   const resultTextarea = content.querySelector('#wiz-result');
 
   const readProfile = () => ({
+    businessName: content.querySelector('#wiz-businessname').value.trim(),
     business: content.querySelector('#wiz-business').value.trim(),
+    details: content.querySelector('#wiz-details').value.trim(),
     audience: content.querySelector('#wiz-audience').value.trim(),
     tone: content.querySelector('#wiz-tone').value,
     goal: content.querySelector('#wiz-goal').value,

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "NerAI - עוזר AI לוואטסאפ",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "תרגום הודעות בזמן אמת, תרגום תוך כדי הקלדה וניתוח שיחות AI לוואטסאפ ווב | by Ner Online - neronline.co.il",
   "permissions": [
     "storage",
