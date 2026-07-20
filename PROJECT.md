@@ -182,9 +182,9 @@
 ### 🧰 כלים מובנים לסוכן (הכיוון הרחב — התחיל 15/07/2026)
 לצד ה-webhooks החיצוניים, הסוכן מקבל כלים פנימיים שפועלים על נתוני וואטסאפ (נרשמים ב-`window.NERAI_BUILTIN_TOOLS`, מורצים מקומית דרך אותו מנגנון function-calling):
 
-- ✅ **get_group_members** — רשימת משתתפי הקבוצה (מכותרת הקבוצה + שולחי ההודעות הטעונות)
-- ⬜ get_chat_links — כל הקישורים ששותפו בשיחה הטעונה
-- ⬜ export_conversation — ייצוא השיחה לטקסט (הפונקציה קיימת, לחשוף ככלי)
+- ✅ **export_group_members_csv** — מזהה משתתפים (כותרת + שולחים) ומוריד CSV (עם BOM לעברית באקסל). תשתית: neraiDownloadFile + csvCell + getCurrentChatName לשימוש חוזר
+- ⬜ get_chat_links — כל הקישורים ששותפו בשיחה הטעונה (→ CSV/רשימה)
+- ⬜ export_conversation — ייצוא השיחה לטקסט/CSV (הפונקציה קיימת, לחשוף ככלי)
 - ⬜ get_unread_summary — "מה פספסתי" ככלי שהסוכן יכול להפעיל
 - ⬜ search_in_chat — חיפוש טקסט בהודעות הטעונות
 - ⬜ get_chat_media_list — רשימת קבצים/תמונות ששותפו

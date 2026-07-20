@@ -3902,10 +3902,44 @@ function showToast(message, type = 'success', duration = 3000) {
 
 window.NERAI_BUILTIN_TOOLS = window.NERAI_BUILTIN_TOOLS || [];
 
-// כלי: רשימת המשתתפים בשיחה/קבוצה הנוכחית
+// הורדת קובץ מתוכן מחרוזת (משמש כלים שמייצרים קבצים)
+function neraiDownloadFile(filename, content, mimeType = 'text/plain;charset=utf-8') {
+  // BOM ל-UTF-8 כדי שאקסל יציג עברית נכון ב-CSV
+  const bom = mimeType.includes('csv') ? '﻿' : '';
+  const blob = new Blob([bom + content], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+// עטיפת ערך לתא CSV (מטפל בפסיקים, מרכאות ושורות חדשות)
+function csvCell(value) {
+  const s = String(value == null ? '' : value);
+  return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+}
+
+// שם השיחה/קבוצה הנוכחית — לשימוש בשמות קבצים
+function getCurrentChatName() {
+  const header = document.querySelector('#main header');
+  if (header) {
+    const title = header.querySelector('span[dir="auto"][title], span[title]');
+    if (title) {
+      const name = (title.getAttribute('title') || title.textContent || '').trim();
+      if (name) return name.replace(/[\\/:*?"<>|]/g, '_').slice(0, 50);
+    }
+  }
+  return 'שיחה';
+}
+
+// כלי: ייצוא רשימת המשתתפים בקבוצה לקובץ CSV
 window.NERAI_BUILTIN_TOOLS.push({
-  name: 'get_group_members',
-  description: 'מחזיר את רשימת המשתתפים בקבוצה/שיחה הפתוחה כרגע. השתמש כשמבקשים רשימת חברים, משתתפים, או "מי בקבוצה".',
+  name: 'export_group_members_csv',
+  description: 'מזהה את משתתפי הקבוצה/שיחה הפתוחה ומוריד אותם כקובץ CSV למחשב. השתמש כשמבקשים רשימת חברים, משתתפים, "מי בקבוצה", או ייצוא של המשתתפים.',
   params: [],
   execute: async () => {
     const members = new Set();
@@ -3943,7 +3977,18 @@ window.NERAI_BUILTIN_TOOLS.push({
     }
 
     const list = Array.from(members).sort();
-    return `זוהו ${list.length} משתתפים (מהכותרת ומההודעות הטעונות):\n${list.map((m, i) => `${i + 1}. ${m}`).join('\n')}`;
+    const chatName = getCurrentChatName();
+
+    // בניית תוכן ה-CSV
+    const rows = [['#', 'שם', 'קבוצה']];
+    list.forEach((name, i) => rows.push([i + 1, name, chatName]));
+    const csv = rows.map(r => r.map(csvCell).join(',')).join('\n');
+
+    const date = new Date().toISOString().slice(0, 10);
+    neraiDownloadFile(`חברי-קבוצה-${chatName}-${date}.csv`, csv, 'text/csv;charset=utf-8');
+
+    // מחזירים אישור קצר בלבד — כדי שהסוכן לא יקריא שוב את כל הרשימה
+    return `הורדתי קובץ CSV עם ${list.length} משתתפים. אשר למשתמש שהקובץ ירד ואל תפרט את השמות אחד-אחד.`;
   }
 });
 
